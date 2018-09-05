@@ -1,0 +1,6 @@
+HBIGo uses unmodified gomacro for interpreted Go code execution
+
+gomacro is licensed under MPL 2.0
+    https://github.com/cosmos72/gomacro/blob/master/LICENSE
+with source code available from
+    https://github.com/cosmos72/gomacro
