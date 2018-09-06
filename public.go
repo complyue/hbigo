@@ -13,16 +13,37 @@ TODO:
 */
 package hbi
 
-import "github.com/complyue/hbigo/pkg/conn"
+import (
+	"flag"
+	"github.com/complyue/hbigo/pkg/conn"
+	"github.com/golang/glog"
+	"log"
+)
 
 type (
 	WireError = conn.WireError
 
-	HBIC = conn.HBIC
+	Context = conn.Context
+
+	Connection = conn.Connection
 )
 
 var (
+	NewContext = conn.NewContext
+
 	ListenTCP = conn.ListenTCP
 
 	MakeTCP = conn.MakeTCP
 )
+
+func init() {
+	var err error
+
+	// change glog default destination to stderr
+	if glog.V(0) { // should always be true, mention glog so it defines its flags before we change them
+		if err = flag.CommandLine.Set("logtostderr", "true"); nil != err {
+			log.Printf("Failed changing glog default desitination, err: %s", err)
+		}
+	}
+
+}

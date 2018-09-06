@@ -1,7 +1,6 @@
 package main
 
 import (
-	"github.com/complyue/hbigo/pkg/echo"
 	"github.com/cosmos72/gomacro/fast"
 	"log"
 	"os"
@@ -12,8 +11,14 @@ func main() {
 
 	log.Println("GP:", os.Getenv("GOPATH"))
 
+	lastMsg := ""
 	interp := fast.New()
-	interp.DeclFunc("ppp", echo.Ppp)
+	interp.DeclFunc("ppp", func(msg string) string {
+		if len(msg) > 0 {
+			lastMsg = msg
+		}
+		return lastMsg
+	})
 	msg, typ := interp.Eval(`
 msg := "xxx"
 ppp(msg)
@@ -24,7 +29,8 @@ ppp(msg)
 		return
 	}
 
-	echo.LastMsg = "qqq"
+	lastMsg = "qqq"
+
 	msg, typ = interp.Eval(`
 ppp("")
 `)

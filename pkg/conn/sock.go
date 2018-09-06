@@ -40,6 +40,7 @@ func ListenTCP(ctxPkgPath string, addr string) (listener *net.TCPListener, err e
 	}
 }
 
+// Make instead of Connect as it can be disconnected & connected again and again
 func MakeTCP(ctxPkgPath string, addr string) (hbic *tcpHBIC, err error) {
 	hbic = &tcpHBIC{ctxPkgPath: ctxPkgPath, addr: addr}
 	err = hbic.Connect()
