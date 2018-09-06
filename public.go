@@ -13,7 +13,7 @@ TODO:
 */
 package hbi
 
-import "./pkg/conn"
+import "github.com/complyue/hbigo/pkg/conn"
 
 type (
 	WireError = conn.WireError

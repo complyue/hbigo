@@ -19,14 +19,16 @@ func ListenTCP(ctxPkgPath string, addr string) (listener *net.TCPListener, err e
 	interp := fast.New()
 	_, _ = interp.Eval(fmt.Sprintf("import . \"%s\"", ctxPkgPath))
 
-	raddr, err := net.ResolveTCPAddr("tcp", addr)
+	var raddr *net.TCPAddr
+	raddr, err = net.ResolveTCPAddr("tcp", addr)
 	if nil != err {
 		log.Fatal("addr error", err)
 		return
 	}
 	listener, err = net.ListenTCP("tcp", raddr)
 	for {
-		conn, err := listener.AcceptTCP()
+		var conn *net.TCPConn
+		conn, err = listener.AcceptTCP()
 		if nil != err {
 			log.Fatal("accept error", err)
 			return

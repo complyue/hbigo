@@ -24,5 +24,15 @@ ppp(msg)
 		return
 	}
 
+	echo.LastMsg = "qqq"
+	msg, typ = interp.Eval(`
+ppp("")
+`)
+	log.Printf("Got msg %v of %v", msg, typ)
+	if nil != err {
+		log.Fatal("Error: ", err)
+		return
+	}
+
 	log.Println("Done.")
 }
