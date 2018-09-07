@@ -1,24 +1,19 @@
 package conn
 
 import (
-	"encoding/json"
 	"fmt"
-	"github.com/cosmos72/gomacro/fast"
 	"log"
 	"net"
 	"strings"
 )
 
 type tcpHBIC struct {
-	ctxPkgPath string
-	addr       string
-	conn       *net.TCPConn
+	context *hbiContext
+	addr    string
+	conn    *net.TCPConn
 }
 
-func ListenTCP(ctxPkgPath string, addr string) (listener *net.TCPListener, err error) {
-	interp := fast.New()
-	_, _ = interp.Eval(fmt.Sprintf("import . \"%s\"", ctxPkgPath))
-
+func ListenTCP(ctxFact ContextFactory, addr string) (listener *net.TCPListener, err error) {
 	var raddr *net.TCPAddr
 	raddr, err = net.ResolveTCPAddr("tcp", addr)
 	if nil != err {
@@ -36,13 +31,63 @@ func ListenTCP(ctxPkgPath string, addr string) (listener *net.TCPListener, err e
 		// todo DoS react
 		go func(hbic *tcpHBIC) {
 
-		}(&tcpHBIC{ctxPkgPath, conn.LocalAddr().String(), conn})
+			hbic.context.peer = hbic
+
+			// packet channel, todo consider buffering ?
+			pch := make(chan Packet)
+			// a packet contains just two strings,
+			// it's more optimal to pass value over channel
+
+			// packet receiving goroutine
+			go func() {
+				for {
+					if hbic.context.Cancelled() {
+						// connection context cancelled
+						return
+					}
+					// blocking read next packet
+					pkt, err := hbic.RecvPacket()
+					if err != nil {
+						hbic.context.Cancel(err)
+						return
+					}
+					if pkt == nil {
+						// no more packet to land, todo further handing ?
+						return
+					}
+					// blocking put packet for landing
+					pch <- *pkt
+					pkt = nil // eager release mem
+				}
+			}()
+
+			// packet landing loop
+			for {
+				select {
+				case <-hbic.context.Done():
+					break
+				case pkt := <-pch:
+					// TODO land pkt
+					switch pkt.WireDir {
+					case "":
+					case "co_begin":
+					case "co_end":
+					case "co_ack":
+					case "corun":
+					case "coget":
+					default:
+						panic("?!")
+					}
+				}
+			}
+
+		}(&tcpHBIC{ctxFact().(*hbiContext), conn.LocalAddr().String(), conn})
 	}
 }
 
 // Make instead of Connect as it can be disconnected & connected again and again
-func MakeTCP(ctxPkgPath string, addr string) (hbic *tcpHBIC, err error) {
-	hbic = &tcpHBIC{ctxPkgPath: ctxPkgPath, addr: addr}
+func MakeTCP(ctx Context, addr string) (hbic *tcpHBIC, err error) {
+	hbic = &tcpHBIC{context: ctx.(*hbiContext), addr: addr}
 	err = hbic.Connect()
 	return
 }
@@ -67,81 +112,55 @@ func (hbic *tcpHBIC) Disconnect() (err error) {
 	return
 }
 
-func (hbic *tcpHBIC) GetText(request string) (code string, err error) {
-
-	raw, dir, err := hbic.GetRaw(request)
-	if err != nil {
-		return
-	}
-	if dir != "" {
-		err = &WireError{fmt.Sprintf("Unexpected wire directive: [%s]", dir)}
-	}
-
-	code = raw
-
-	return
+func (hbic *tcpHBIC) Fire(code string) {
+	panic("implement me")
 }
 
-func (hbic *tcpHBIC) GetJSON(request string, result interface{}) (err error) {
-
-	raw, dir, err := hbic.GetRaw(request)
-	if err != nil {
-		return
-	}
-	if dir != "" {
-		err = &WireError{fmt.Sprintf("Unexpected wire directive: [%s]", dir)}
-	}
-
-	err = json.Unmarshal([]byte(raw), result)
-	if err != nil {
-		return
-	}
-
-	return
+func (hbic *tcpHBIC) FireCoRun(code string, data chan []byte) {
+	panic("implement me")
 }
 
-func (hbic *tcpHBIC) GetRaw(request string) (response string, dir string, err error) {
-	const LocalCoId = "1"
-
-	if _, err = hbic.SendPacket(LocalCoId, "co_begin"); err != nil {
-		log.Fatal("send error", err)
-		return
-	}
-
-	response, dir, err = hbic.RecvPacket()
-	if err != nil {
-		log.Fatal("recv error", err)
-		return
-	}
-
-	if "co_ack" != dir || LocalCoId != response {
-		err = &WireError{fmt.Sprintf("Unexpected co response [#%s]%s", dir, response)}
-		return
-	}
-
-	if _, err = hbic.SendPacket(request, "coget"); err != nil {
-		log.Fatal("send error", err)
-		return
-	}
-
-	if _, err = hbic.SendPacket(LocalCoId, "co_end"); err != nil {
-		log.Fatal("send error", err)
-		return
-	}
-
-	response, dir, err = hbic.RecvPacket()
-	if err != nil {
-		log.Fatal("recv error", err)
-		return
-	}
-	if "" != dir {
-		err = &WireError{fmt.Sprintf("Unexpected response [#%s]%s", dir, response)}
-	}
-
-	return
+func (hbic *tcpHBIC) Notif(code string) (err error) {
+	panic("implement me")
 }
 
-func (hbic *tcpHBIC) SendPacket(payload string, wireDir string) (n int64, err error) {
+func (hbic *tcpHBIC) NotifCoRun(code string, data chan []byte) (err error) {
+	panic("implement me")
+}
+
+func (hbic *tcpHBIC) CoBegin() (err error) {
+	panic("implement me")
+}
+
+func (hbic *tcpHBIC) CoSendCoRun(code string) (err error) {
+	panic("implement me")
+}
+
+func (hbic *tcpHBIC) CoGet(code string) (result interface{}, err error) {
+	panic("implement me")
+}
+
+func (hbic *tcpHBIC) CoSendCode(code string) (err error) {
+	panic("implement me")
+}
+
+func (hbic *tcpHBIC) CoSendData(data chan []byte) (err error) {
+	panic("implement me")
+}
+
+func (hbic *tcpHBIC) CoRecvObj() (result interface{}, err error) {
+	panic("implement me")
+}
+
+func (hbic *tcpHBIC) CoRecvData(data chan []byte) (err error) {
+	panic("implement me")
+}
+
+func (hbic *tcpHBIC) CoEnd() (err error) {
+	panic("implement me")
+}
+
+func (hbic *tcpHBIC) SendPacket(payload, wireDir string) (n int64, err error) {
 	header := fmt.Sprintf("[%v#%s]", len(payload), wireDir)
 	bufs := net.Buffers{
 		[]byte(header), []byte(payload),
@@ -150,9 +169,10 @@ func (hbic *tcpHBIC) SendPacket(payload string, wireDir string) (n int64, err er
 	return
 }
 
-func (hbic *tcpHBIC) RecvPacket() (payload string, wireDir string, err error) {
+func (hbic *tcpHBIC) RecvPacket() (packet *Packet, err error) {
 	const MaxHeaderLen = 60
 	var (
+		wireDir, payload string
 		n, start, newLen int
 		hdrBuf           = make([]byte, 0, MaxHeaderLen)
 		payloadBuf       []byte
@@ -215,5 +235,6 @@ func (hbic *tcpHBIC) RecvPacket() (payload string, wireDir string, err error) {
 	}
 	payload = string(payloadBuf)
 
+	packet = &Packet{wireDir, payload}
 	return
 }

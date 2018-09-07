@@ -6,7 +6,7 @@ import (
 	"github.com/cosmos72/gomacro/fast"
 	"go/types"
 	"reflect"
-	"sync/atomic"
+	"sync"
 	"time"
 )
 
@@ -30,10 +30,10 @@ func NewContext(populations ...interface{}) Context {
 		var coll reflect.Value
 		switch somebody := popu.(type) {
 		case reflect.Type:
-			hbic.Put(somebody.Name(), somebody)
+			hbic.put(somebody.Name(), somebody)
 			continue
 		case types.Func:
-			hbic.Put(somebody.Name(), somebody)
+			hbic.put(somebody.Name(), somebody)
 			continue
 		case reflect.Value:
 			coll = somebody
@@ -46,13 +46,13 @@ func NewContext(populations ...interface{}) Context {
 			for i, n := 0, t.NumField(); i < n; i++ {
 				fn := t.Field(i).Name
 				fv := coll.Field(i)
-				hbic.Put(fn, fv)
+				hbic.put(fn, fv)
 			}
 		case reflect.Map:
 			for _, key := range coll.MapKeys() {
 				mk := fmt.Sprintf("%s", key)
 				mv := coll.MapIndex(key).Interface()
-				hbic.Put(mk, mv)
+				hbic.put(mk, mv)
 			}
 		default:
 			panic(fmt.Sprintf("Unsupported population type: %t", popu))
@@ -63,10 +63,11 @@ func NewContext(populations ...interface{}) Context {
 }
 
 type hbiContext struct {
-	done   chan struct{} // todo use atomic.Value too ??
-	err    atomic.Value
-	peer   Connection // todo use atomic.Value too ??
-	interp *fast.Interp
+	sync.RWMutex
+	done   chan struct{}
+	err    error
+	peer   Connection   // one time write before all reads, no need to sync
+	interp *fast.Interp // never change no need to sync
 }
 
 func (hbic *hbiContext) Deadline() (deadline time.Time, ok bool) {
@@ -75,11 +76,15 @@ func (hbic *hbiContext) Deadline() (deadline time.Time, ok bool) {
 }
 
 func (hbic *hbiContext) Done() <-chan struct{} {
+	hbic.RLock()
+	defer hbic.RUnlock()
 	return hbic.done
 }
 
 func (hbic *hbiContext) Err() error {
-	return hbic.err.Load().(error)
+	hbic.RLock()
+	defer hbic.RUnlock()
+	return hbic.err
 }
 
 func (hbic *hbiContext) Value(key interface{}) interface{} {
@@ -99,8 +104,10 @@ func init() {
 }
 
 func (hbic *hbiContext) Cancel(err error) {
+	hbic.Lock()
+	defer hbic.Unlock()
 	if err != nil {
-		hbic.err.Store(err)
+		hbic.err = err
 	}
 	if done := hbic.done; done != closedChan {
 		hbic.done = closedChan
@@ -109,6 +116,8 @@ func (hbic *hbiContext) Cancel(err error) {
 }
 
 func (hbic *hbiContext) Cancelled() bool {
+	hbic.RLock()
+	defer hbic.RUnlock()
 	return hbic.done == closedChan
 }
 
@@ -122,10 +131,18 @@ func (hbic *hbiContext) String() string {
 }
 
 func (hbic *hbiContext) Get(key string) interface{} {
+	hbic.RLock()
+	defer hbic.RUnlock()
 	return hbic.interp.ValueOf(key).Interface()
 }
 
 func (hbic *hbiContext) Put(key string, value interface{}) {
+	hbic.Lock()
+	defer hbic.Unlock()
+	hbic.put(key, value)
+}
+
+func (hbic *hbiContext) put(key string, value interface{}) {
 	interp := hbic.interp
 	if t, ok := value.(reflect.Type); ok {
 		interp.DeclTypeAlias(key, interp.Comp.Universe.FromReflectType(t))

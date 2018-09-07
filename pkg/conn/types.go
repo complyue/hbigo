@@ -1,5 +1,7 @@
 package conn
 
+import "github.com/complyue/hbigo"
+
 type WireError struct {
 	msg string
 }
@@ -33,3 +35,5 @@ type Connection interface {
 
 	Disconnect() (err error)
 }
+
+type ContextFactory func() hbi.Context
