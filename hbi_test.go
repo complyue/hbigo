@@ -8,13 +8,16 @@ import (
 
 func TestMain(m *testing.M) {
 
-	ListenTCP()
+	ListenTCP(func() Context {
+		return NewContext()
+	}, "127.0.0.1:3232")
 
 	os.Exit(m.Run())
 }
 
 func TestGreeting(t *testing.T) {
-	MakeTCP()
+	hbic, err := MakeTCP(NewContext(), "127.0.0.1:3232")
+	defer CoDone(hbic.Co())
 
 	type Inventory struct {
 		Material string

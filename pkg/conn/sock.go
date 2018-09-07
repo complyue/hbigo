@@ -5,14 +5,21 @@ import (
 	"log"
 	"net"
 	"strings"
+	"sync"
 )
 
 type tcpHBIC struct {
-	context *hbiContext
-	addr    string
-	conn    *net.TCPConn
+	context              *hbiContext
+	addr                 string
+	conn                 *net.TCPConn
+	muSend, muCo, muRecv sync.Mutex
+	inCo                 bool
+	objCh                chan interface{}
 }
 
+/*
+
+ */
 func ListenTCP(ctxFact ContextFactory, addr string) (listener *net.TCPListener, err error) {
 	var raddr *net.TCPAddr
 	raddr, err = net.ResolveTCPAddr("tcp", addr)
@@ -29,66 +36,33 @@ func ListenTCP(ctxFact ContextFactory, addr string) (listener *net.TCPListener, 
 			return
 		}
 		// todo DoS react
-		go func(hbic *tcpHBIC) {
-
-			hbic.context.peer = hbic
-
-			// packet channel, todo consider buffering ?
-			pch := make(chan Packet)
-			// a packet contains just two strings,
-			// it's more optimal to pass value over channel
-
-			// packet receiving goroutine
-			go func() {
-				for {
-					if hbic.context.Cancelled() {
-						// connection context cancelled
-						return
-					}
-					// blocking read next packet
-					pkt, err := hbic.RecvPacket()
-					if err != nil {
-						hbic.context.Cancel(err)
-						return
-					}
-					if pkt == nil {
-						// no more packet to land, todo further handing ?
-						return
-					}
-					// blocking put packet for landing
-					pch <- *pkt
-					pkt = nil // eager release mem
-				}
-			}()
-
-			// packet landing loop
-			for {
-				select {
-				case <-hbic.context.Done():
-					break
-				case pkt := <-pch:
-					// TODO land pkt
-					switch pkt.WireDir {
-					case "":
-					case "co_begin":
-					case "co_end":
-					case "co_ack":
-					case "corun":
-					case "coget":
-					default:
-						panic("?!")
-					}
-				}
-			}
-
-		}(&tcpHBIC{ctxFact().(*hbiContext), conn.LocalAddr().String(), conn})
+		hbic := &tcpHBIC{
+			context: ctxFact().(*hbiContext),
+			addr:    conn.LocalAddr().String(),
+			conn:    conn,
+			objCh:   make(chan interface{}),
+		}
+		hbic.context.peer = hbic
+		go hbic.landingLoop()
 	}
 }
 
-// Make instead of Connect as it can be disconnected & connected again and again
+/*
+
+this func named MakeTCP instead of ConnectTCP, as an HBIC can be disconnected & (re)connected again and again.
+*/
 func MakeTCP(ctx Context, addr string) (hbic *tcpHBIC, err error) {
-	hbic = &tcpHBIC{context: ctx.(*hbiContext), addr: addr}
+	hbic = &tcpHBIC{
+		context: ctx.(*hbiContext),
+		addr:    addr,
+		objCh:   make(chan interface{}),
+	}
+	hbic.context.peer = hbic
 	err = hbic.Connect()
+	if err != nil {
+		return
+	}
+	go hbic.landingLoop()
 	return
 }
 
@@ -113,54 +87,210 @@ func (hbic *tcpHBIC) Disconnect() (err error) {
 }
 
 func (hbic *tcpHBIC) Fire(code string) {
-	panic("implement me")
+	go hbic.Notif(code)
 }
 
-func (hbic *tcpHBIC) FireCoRun(code string, data chan []byte) {
-	panic("implement me")
+func (hbic *tcpHBIC) FireCoRun(code string, data <-chan []byte) {
+	go hbic.NotifCoRun(code, data)
 }
 
 func (hbic *tcpHBIC) Notif(code string) (err error) {
-	panic("implement me")
+	hbic.muSend.Lock()
+	defer hbic.muSend.Unlock()
+
+	_, err = hbic.sendPacket(code, "")
+	if err != nil {
+		return
+	}
+
+	return
 }
 
-func (hbic *tcpHBIC) NotifCoRun(code string, data chan []byte) (err error) {
-	panic("implement me")
+func (hbic *tcpHBIC) NotifCoRun(code string, data <-chan []byte) (err error) {
+	hbic.muSend.Lock()
+	defer hbic.muSend.Unlock()
+
+	_, err = hbic.sendPacket(code, "corun")
+	if err != nil {
+		return
+	}
+	_, err = hbic.sendData(data)
+	if err != nil {
+		return
+	}
+
+	return
 }
 
-func (hbic *tcpHBIC) CoBegin() (err error) {
-	panic("implement me")
+func (hbic *tcpHBIC) Co() Connection {
+	hbic.muSend.Lock()
+	hbic.muCo.Lock()
+	if hbic.inCo {
+		panic(UsageError{"Already in corun mode ?!"})
+	}
+	hbic.inCo = true
+	return hbic
 }
 
-func (hbic *tcpHBIC) CoSendCoRun(code string) (err error) {
-	panic("implement me")
+func (hbic *tcpHBIC) coDone() {
+	if !hbic.inCo {
+		panic(UsageError{"Not in corun mode ?!"})
+	}
+	hbic.inCo = false
+	hbic.muCo.Unlock()
+	hbic.muSend.Unlock()
 }
 
-func (hbic *tcpHBIC) CoGet(code string) (result interface{}, err error) {
-	panic("implement me")
+func (hbic *tcpHBIC) CoSendCoRun(code string, data <-chan []byte) (err error) {
+	if !hbic.inCo {
+		panic(UsageError{"Not in corun mode ?!"})
+	}
+
+	_, err = hbic.sendPacket(code, "corun")
+	if err != nil {
+		return
+	}
+	_, err = hbic.sendData(data)
+	if err != nil {
+		return
+	}
+
+	return
 }
 
 func (hbic *tcpHBIC) CoSendCode(code string) (err error) {
-	panic("implement me")
+	if !hbic.inCo {
+		panic(UsageError{"Not in corun mode ?!"})
+	}
+
+	_, err = hbic.sendPacket(code, "")
+	if err != nil {
+		return
+	}
+
+	return
 }
 
-func (hbic *tcpHBIC) CoSendData(data chan []byte) (err error) {
-	panic("implement me")
+func (hbic *tcpHBIC) CoSendData(data <-chan []byte) (err error) {
+	if !hbic.inCo {
+		panic(UsageError{"Not in corun mode ?!"})
+	}
+
+	_, err = hbic.sendData(data)
+	if err != nil {
+		return
+	}
+
+	return
+}
+
+func (hbic *tcpHBIC) CoGet(code string) (result interface{}, err error) {
+	if !hbic.inCo {
+		panic(UsageError{"Not in corun mode ?!"})
+	}
+
+	_, err = hbic.sendPacket(code, "coget")
+	if err != nil {
+		return
+	}
+
+	result, err = hbic.CoRecvObj()
+
+	return
 }
 
 func (hbic *tcpHBIC) CoRecvObj() (result interface{}, err error) {
 	panic("implement me")
 }
 
-func (hbic *tcpHBIC) CoRecvData(data chan []byte) (err error) {
+func (hbic *tcpHBIC) CoRecvData(data <-chan []byte) (err error) {
 	panic("implement me")
 }
 
-func (hbic *tcpHBIC) CoEnd() (err error) {
-	panic("implement me")
+func (hbic *tcpHBIC) landingLoop() {
+	hbic.context.peer = hbic
+
+	// packet channel, todo consider buffering ?
+	pch := make(chan Packet)
+	// a packet contains just two strings,
+	// it's more optimal to pass value over channel
+
+	// packet receiving goroutine
+	go func() {
+		for {
+			if hbic.context.Cancelled() {
+				// connection context cancelled
+				return
+			}
+			// blocking read next packet
+			pkt, err := hbic.recvPacket()
+			if err != nil {
+				hbic.context.Cancel(err)
+				return
+			}
+			if pkt == nil {
+				// no more packet to land, todo further handing ?
+				return
+			}
+			// blocking put packet for landing
+			pch <- *pkt
+			pkt = nil // eager release mem
+		}
+	}()
+
+	// packet landing loop
+	for {
+		select {
+		case <-hbic.context.Done():
+			break
+		case pkt := <-pch:
+			// TODO land pkt
+			switch pkt.WireDir {
+			case "":
+			case "co_begin":
+			case "co_end":
+			case "co_ack":
+			case "corun":
+			case "coget":
+			default:
+				panic("?!")
+			}
+		}
+	}
+
 }
 
-func (hbic *tcpHBIC) SendPacket(payload, wireDir string) (n int64, err error) {
+/*
+CoRun() can be simply considered an example to run a local HBI conversation, following 2 forms are equivalent:
+
+Closure Style:
+```
+err = hbic.CoRun(func() err error {
+	err = ...
+
+	return
+}())
+```
+
+Defer Style:
+```
+func() {
+	defer hbi.CoDone(hbic.Co())
+
+	err = ...
+}()
+```
+
+The defer style is more preferable when your method or func is perfectly mapped to an HBI conversation.
+
+*/
+func (hbic *tcpHBIC) CoRun(fn func() error) (err error) {
+	defer CoDone(hbic.Co())
+	err = fn()
+	return
+}
+
+func (hbic *tcpHBIC) sendPacket(payload, wireDir string) (n int64, err error) {
 	header := fmt.Sprintf("[%v#%s]", len(payload), wireDir)
 	bufs := net.Buffers{
 		[]byte(header), []byte(payload),
@@ -169,7 +299,7 @@ func (hbic *tcpHBIC) SendPacket(payload, wireDir string) (n int64, err error) {
 	return
 }
 
-func (hbic *tcpHBIC) RecvPacket() (packet *Packet, err error) {
+func (hbic *tcpHBIC) recvPacket() (packet *Packet, err error) {
 	const MaxHeaderLen = 60
 	var (
 		wireDir, payload string
@@ -236,5 +366,73 @@ func (hbic *tcpHBIC) RecvPacket() (packet *Packet, err error) {
 	payload = string(payloadBuf)
 
 	packet = &Packet{wireDir, payload}
+	return
+}
+
+// each []byte will have its len() of data sent, regardless of it cap()
+func (hbic *tcpHBIC) sendData(data <-chan []byte) (n int64, err error) {
+	var bufs net.Buffers
+	var nb int64
+	for {
+		select {
+		case <-hbic.context.Done():
+			// context cancelled
+			return
+		case buf, ok := <-data:
+			if !ok {
+				// no more buf to send
+				break
+			}
+			if len(buf) <= 0 {
+				// zero buf, ignore it
+				break
+			}
+			bufs = append(bufs, buf)
+		}
+		if len(bufs) <= 0 {
+			// all data sent
+			return
+		}
+		nb, err = bufs.WriteTo(hbic.conn)
+		if err != nil {
+			return
+		}
+		n += nb
+	}
+	return
+}
+
+// each []byte will be filled up to its full cap
+func (hbic *tcpHBIC) recvData(data <-chan []byte) (n int64, err error) {
+	var nb int
+	for {
+		select {
+		case <-hbic.context.Done():
+			// context cancelled
+			return
+		case buf, ok := <-data:
+			if !ok {
+				// no more buf to send
+				break
+			}
+			if len(buf) <= 0 {
+				// zero buf, ignore it
+				break
+			}
+			for {
+				nb, err = hbic.conn.Read(buf[:cap(buf)])
+				if err != nil {
+					return
+				}
+				if nb >= cap(buf) {
+					// this buf fully filled
+					break
+				}
+				n += int64(nb)
+				// read into rest space
+				buf = buf[nb:cap(buf)]
+			}
+		}
+	}
 	return
 }

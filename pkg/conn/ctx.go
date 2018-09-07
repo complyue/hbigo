@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+type ContextFactory func() Context
+
 type Context interface {
 	context.Context
 	Cancel(err error)

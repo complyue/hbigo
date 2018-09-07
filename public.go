@@ -21,14 +21,18 @@ import (
 )
 
 type (
-	WireError = conn.WireError
+	WireError  = conn.WireError
+	UsageError = conn.UsageError
 
-	Context = conn.Context
+	Context        = conn.Context
+	ContextFactory = conn.ContextFactory
 
 	Connection = conn.Connection
 )
 
 var (
+	CoDone = conn.CoDone
+
 	NewContext = conn.NewContext
 
 	ListenTCP = conn.ListenTCP
