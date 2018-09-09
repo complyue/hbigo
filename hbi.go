@@ -1,7 +1,7 @@
 /*
 Hosting Based Interfacing for Go 1
 
-Status: full Go 1 support for hbi connectivity, including:
+HBI connectivity, including:
 	notif (pub)
 	corun (sub or pub)
 	coget (rpc)
@@ -16,28 +16,26 @@ package hbi
 import (
 	"flag"
 	"github.com/complyue/hbigo/pkg/conn"
+	hbierrs "github.com/complyue/hbigo/pkg/errors"
+	"github.com/complyue/hbigo/pkg/proto"
 	"github.com/golang/glog"
 	"log"
 )
 
 type (
-	WireError  = conn.WireError
-	UsageError = conn.UsageError
-
-	Context        = conn.Context
-	ContextFactory = conn.ContextFactory
-
-	Connection = conn.Connection
+	WireError  = hbierrs.WireError
+	UsageError = hbierrs.UsageError
+	HoContext  = proto.HoContext
+	Hosting    = proto.Hosting
+	Posting    = proto.Posting
 )
 
 var (
-	CoDone = conn.CoDone
+	NewHoContext = proto.NewHoContext
 
-	NewContext = conn.NewContext
+	ServeTCP = conn.ServeTCP
 
-	ListenTCP = conn.ListenTCP
-
-	MakeTCP = conn.MakeTCP
+	//MakeTCP = conn.MakeTCP
 )
 
 func init() {

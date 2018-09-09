@@ -1,4 +1,4 @@
-package conn
+package proto
 
 import "fmt"
 
@@ -8,5 +8,5 @@ type Packet struct {
 }
 
 func (pkt *Packet) String() string {
-	return fmt.Sprintf("[#%s]%s", pkt.WireDir, pkt.Payload)
+	return fmt.Sprintf("[%d#%s]%s", len(pkt.Payload), pkt.WireDir, pkt.Payload)
 }
