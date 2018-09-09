@@ -25,17 +25,18 @@ import (
 type (
 	WireError  = hbierrs.WireError
 	UsageError = hbierrs.UsageError
-	HoContext  = proto.HoContext
-	Hosting    = proto.Hosting
-	Posting    = proto.Posting
+
+	HoContext = proto.HoContext
+
+	Hosting = proto.Hosting
+	Posting = proto.Posting
 )
 
 var (
 	NewHoContext = proto.NewHoContext
 
 	ServeTCP = conn.ServeTCP
-
-	//MakeTCP = conn.MakeTCP
+	DialTCP  = conn.DialTCP
 )
 
 func init() {

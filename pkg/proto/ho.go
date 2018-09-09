@@ -98,6 +98,19 @@ func (ho *HostingEndpoint) StartLandingLoop() {
 }
 
 func (ho *HostingEndpoint) landingLoop() {
+	defer func() {
+		// disconnect wire, don't crash the whole process
+		if err := recover(); err != nil {
+			if err, ok := err.(error); ok {
+				glog.Errorf("HBI landing error: %s\n", err.Error())
+				ho.Cancel(err)
+			} else {
+				glog.Error("HBI landing error: %s\n", err)
+				ho.Close()
+			}
+		}
+	}()
+
 	// receive proceeding signal channel
 	chProc := make(chan struct{})
 
@@ -108,6 +121,19 @@ func (ho *HostingEndpoint) landingLoop() {
 
 	// packet receiving goroutine
 	go func() {
+		defer func() {
+			// disconnect wire, don't crash the whole process
+			if err := recover(); err != nil {
+				if err, ok := err.(error); ok {
+					glog.Errorf("HBI receiving error: %s\n", err.Error())
+					ho.Cancel(err)
+				} else {
+					glog.Error("HBI receiving error: %s\n", err)
+					ho.Close()
+				}
+			}
+		}()
+
 		for {
 			if ho.Cancelled() {
 				// connection context cancelled

@@ -19,7 +19,10 @@ func PrepareHosting(ctx HoContext) {
 		return
 	}
 	var (
-		cv      = reflect.ValueOf(ctx).Elem() // must be a pointer type
+		// must be a pointer type
+		pv      = reflect.ValueOf(ctx)
+		pt      = pv.Type()
+		cv      = pv.Elem()
 		ct      = cv.Type()
 		nf      = ct.NumField()
 		hc      *hoContext
@@ -39,21 +42,24 @@ func PrepareHosting(ctx HoContext) {
 			}
 			continue
 		}
-		// expose a field getter func
+		// expose field getter/setter func
 		exports[sf.Name] = func() interface{} {
 			return fv.Interface()
+		}
+		exports["Set"+sf.Name] = func(v interface{}) {
+			fv.Set(reflect.ValueOf(v))
 		}
 	}
 	if hc == nil {
 		panic(UsageError{fmt.Sprintf("No embedded HoContext in struct %s ?!", ct.Name())})
 	}
 	// collected exported methods of the context struct
-	for mi, nm := 0, ct.NumMethod(); mi < nm; mi++ {
-		mt := ct.Method(mi)
+	for mi, nm := 0, pv.NumMethod(); mi < nm; mi++ {
+		mt := pt.Method(mi)
 		if mt.PkgPath != "" {
 			continue // ignore unexported method
 		}
-		mv := cv.Method(mi)
+		mv := pv.Method(mi)
 		exports[mt.Name] = mv
 	}
 

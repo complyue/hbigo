@@ -106,7 +106,7 @@ func (room *Room) MsgLog() []string {
 // server globals
 var (
 	mu    sync.Mutex
-	lobby = NewRoom("Loggy")
+	lobby = NewRoom("Lobby")
 	rooms = make(map[string]*Room)
 )
 
@@ -132,24 +132,24 @@ func prepareRoom(roomId string) (room *Room) {
 type ChatContext struct {
 	hbi.HoContext
 
-	nick   string
+	Nick   string
 	inRoom *Room
 }
 
 func NewChatContext() hbi.HoContext {
 	return &ChatContext{
 		HoContext: hbi.NewHoContext(),
-		nick:      "stranger",
+		Nick:      "stranger",
 		inRoom:    lobby,
 	}
 }
 
-// intercept p2p to initialize nick name from network identity, and show this
+// intercept p2p to initialize Nick name from network identity, and show this
 // newly connected client to lobby
 func (ctx *ChatContext) SetPoToPeer(p2p hbi.Posting) {
 	ctx.HoContext.SetPoToPeer(p2p)
 	if p2p != nil {
-		ctx.nick = p2p.NetIdent()
+		ctx.Nick = p2p.NetIdent()
 		ctx.Goto("") // goto lobby
 	}
 }
@@ -165,7 +165,7 @@ println("Welcome %s, you are in %s now.");
 println(%#v)
 println("%d other(s) in this room now.")
 `,
-			ctx.nick, room.name,
+			ctx.Nick, room.name,
 			strings.Join(room.MsgLog(), "\n"),
 			len(room.stayers),
 		))
@@ -174,5 +174,5 @@ println("%d other(s) in this room now.")
 }
 
 func (ctx *ChatContext) Say(msg string) {
-	ctx.inRoom.Post(ctx.nick, msg)
+	ctx.inRoom.Post(ctx.Nick, msg)
 }

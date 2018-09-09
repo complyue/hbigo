@@ -17,8 +17,8 @@ type TCPConn struct {
 }
 
 /*
-
- */
+Serve with a hosting context factory, at specified local address (host:port)
+*/
 func ServeTCP(ctxFact func() HoContext, addr string) (listener *net.TCPListener, err error) {
 	var raddr *net.TCPAddr
 	raddr, err = net.ResolveTCPAddr("tcp", addr)
@@ -60,6 +60,48 @@ func ServeTCP(ctxFact func() HoContext, addr string) (listener *net.TCPListener,
 
 		ho.StartLandingLoop()
 	}
+}
+
+/*
+Connect to specified remote address (host+port) with a hosting context
+*/
+func DialTCP(ctx HoContext, addr string) (hbic *TCPConn, err error) {
+	raddr, err := net.ResolveTCPAddr("tcp", addr)
+	if nil != err {
+		log.Fatal("addr error", err)
+		return
+	}
+	conn, err := net.DialTCP("tcp", nil, raddr)
+	if nil != err {
+		log.Fatal("conn error", err)
+		return
+	}
+	netIdent := fmt.Sprintf("%s<->%s", conn.LocalAddr(), conn.RemoteAddr())
+	glog.V(1).Infof("New HBI connection established: %s", netIdent)
+
+	ho := NewHostingEndpoint(ctx)
+	hoWire := TCPWire{
+		CancellableContext: ho,
+		conn:               conn,
+	}
+	ho.PlugWire(netIdent, hoWire.recvPacket, hoWire.recvData)
+
+	po := NewPostingEndpoint()
+	poWire := TCPWire{
+		CancellableContext: po,
+		conn:               conn,
+	}
+	po.PlugWire(netIdent, poWire.sendPacket, poWire.sendData, ho)
+
+	ho.SetPoToPeer(po)
+
+	ho.StartLandingLoop()
+
+	hbic = &TCPConn{
+		Hosting: ho, Posting: po,
+	}
+
+	return
 }
 
 type TCPWire struct {
