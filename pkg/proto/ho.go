@@ -4,6 +4,7 @@ import (
 	"fmt"
 	. "github.com/complyue/hbigo/pkg/errors"
 	"github.com/golang/glog"
+	"io"
 )
 
 type Hosting interface {
@@ -142,19 +143,32 @@ func (ho *HostingEndpoint) landingLoop() {
 			// blocking read next packet
 			pkt, err := ho.recvPacket()
 			if err != nil {
-				// treat receiving error as fatal, and fully disconnect (i.e.
-				// cancel the connection context at all)
-				ho.Cancel(err)
-				return
+				if err == io.EOF {
+					// live with EOF by far, pkt may be nil or not in this case
+				} else {
+					// treat receiving error as fatal, and fully disconnect (i.e.
+					// cancel the connection context at all)
+					ho.Cancel(err)
+					return
+				}
 			}
 			if pkt != nil {
 				// blocking put packet for landing
 				chPkt <- *pkt
 				pkt = nil // eager release mem
 			} else {
-				// mostly the tcp connection has been disconnected, nop now.
-				// expecting a proceed signal on chProc after (auto) re-connected,
-				// then we will be receiving next packet from the new tcp connection.
+				// mostly the tcp connection has been disconnected,
+				glog.V(1).Infof("HBI peer %s disconnected.", ho.netIdent)
+				// clear closer to avoid closing the disconnected socket. todo will here something leaked ?
+				ho.closer = nil
+				// do close so the posting endpoint if present, get closed
+				ho.Close()
+
+				// done for now
+				return
+				// todo do not return when auto-re-connect is implemented, in which case continue here,
+				// expecting a proceed signal on chProc after auto-re-connected,
+				// then we will be receiving next packet from the new tcp socket.
 			}
 
 			// wait proceeding signal before attempt to receive next packet,
@@ -171,8 +185,8 @@ func (ho *HostingEndpoint) landingLoop() {
 		case <-ho.Done():
 			// connection context cancelled
 			glog.V(1).Infof(
-				"HBI wire %s landing stopped err=%#v",
-				ho.NetIdent, ho.Err(),
+				"HBI wire %s landing stopped err=%+v",
+				ho.NetIdent(), ho.Err(),
 			)
 			return
 		case pkt := <-chPkt:
@@ -302,6 +316,11 @@ func (ho *HostingEndpoint) Cancel(err error) {
 	// make sure the done channel is closed anyway
 	defer ho.HoContext.Cancel(err)
 
+	// cancel posting endpoint if still connected, it tends to use RLock, so process before WLock below, or deadlock!
+	if p2p := ho.PoToPeer(); p2p != nil {
+		p2p.Cancel(err)
+	}
+
 	ho.Lock()
 	defer ho.Unlock()
 
@@ -320,8 +339,6 @@ func (ho *HostingEndpoint) Cancel(err error) {
 			glog.Warningf("Error when closing hosting wire: %+v\n", RichError(e))
 		}
 	}()
-
-	// todo some cleanup here ?
 
 }
 

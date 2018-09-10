@@ -14,6 +14,9 @@ type richError interface {
 }
 
 func RichError(err interface{}) error {
+	if err == nil {
+		return nil
+	}
 	switch err := err.(type) {
 	case richError:
 		return err

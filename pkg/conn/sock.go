@@ -6,6 +6,7 @@ import (
 	. "github.com/complyue/hbigo/pkg/proto"
 	"github.com/complyue/hbigo/pkg/util"
 	"github.com/golang/glog"
+	"io"
 	"log"
 	"net"
 	"strings"
@@ -145,7 +146,14 @@ func (wire *TCPWire) recvPacket() (packet *Packet, err error) {
 		}
 		start = len(hdrBuf)
 		n, err = wire.conn.Read(hdrBuf[start:cap(hdrBuf)])
-		if err != nil {
+		if err == io.EOF {
+			if start+n <= 0 {
+				// normal EOF after full packet, return nil + EOF
+				return
+			}
+			// fall through to receive this last packet, it's possible we already got the full data in hdrBuf
+		} else if err != nil {
+			// other error occurred
 			return
 		}
 		newLen = start + n
@@ -184,11 +192,20 @@ func (wire *TCPWire) recvPacket() (packet *Packet, err error) {
 			err = NewWireError(fmt.Sprintf("No header within first %v bytes!", MaxHeaderLen))
 			return
 		}
+		if err == io.EOF {
+			// reached EOF without full header
+			err = NewWireError("Incomplete header at EOF!")
+			return
+		}
 	}
 
 	// read payload
 	for len(payloadBuf) < cap(payloadBuf) {
 		if wire.Cancelled() {
+			return
+		}
+		if err == io.EOF {
+			err = NewWireError("Premature packet at EOF.")
 			return
 		}
 		start = len(payloadBuf)
@@ -202,6 +219,11 @@ func (wire *TCPWire) recvPacket() (packet *Packet, err error) {
 	payload = string(payloadBuf)
 
 	packet = &Packet{wireDir, payload}
+	if err == io.EOF {
+		// clear EOF if got a complete packet.
+		// todo what if the underlying Reader not tolerating our next read passing EOF
+		err = nil
+	}
 	return
 }
 

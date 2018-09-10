@@ -1,6 +1,7 @@
 package proto
 
 import (
+	"bytes"
 	"fmt"
 	. "github.com/complyue/hbigo/pkg/errors"
 	"reflect"
@@ -24,12 +25,11 @@ func PrepareHosting(ctx HoContext) {
 		pt      = pv.Type()
 		cv      = pv.Elem()
 		ct      = cv.Type()
-		nf      = ct.NumField()
 		hc      *hoContext
 		exports = make(map[string]interface{})
 	)
 	// collect exported fields of the context struct, and extract embedded hoContext btw
-	for fi := 0; fi < nf; fi++ {
+	for fi, nf := 0, ct.NumField(); fi < nf; fi++ {
 		sf := ct.Field(fi)
 		fv := cv.Field(fi)
 		if sf.PkgPath != "" {
@@ -46,13 +46,18 @@ func PrepareHosting(ctx HoContext) {
 		exports[sf.Name] = func() interface{} {
 			return fv.Interface()
 		}
-		exports["Set"+sf.Name] = func(v interface{}) {
-			fv.Set(reflect.ValueOf(v))
-		}
+		exports["Set"+sf.Name] = reflect.MakeFunc(
+			reflect.FuncOf([]reflect.Type{sf.Type}, []reflect.Type{}, false),
+			func(args []reflect.Value) (results []reflect.Value) {
+				fv.Set(args[0])
+				return
+			},
+		)
 	}
 	if hc == nil {
 		panic(NewUsageError(fmt.Sprintf("No embedded HoContext in struct %s ?!", ct.Name())))
 	}
+
 	// collected exported methods of the context struct
 	for mi, nm := 0, pv.NumMethod(); mi < nm; mi++ {
 		mt := pt.Method(mi)
@@ -63,10 +68,42 @@ func PrepareHosting(ctx HoContext) {
 		exports[mt.Name] = mv
 	}
 
+	// prepare black list for names to be filtererer when planting artifacts into interpreter,
+	// i.e. all fields/methods promoted from embedded HoContext should be excluded
+	if expBlackList == nil {
+		expBlackList = make(map[string]struct{}, len(exports))
+		pt := reflect.ValueOf(hc).Type()
+		vt := pt.Elem()
+		for fi, nf := 0, ct.NumField(); fi < nf; fi++ {
+			sf := vt.Field(fi)
+			if sf.PkgPath != "" {
+				continue // ignore unexported field
+			}
+			expBlackList[sf.Name] = struct{}{}
+		}
+		for mi, nm := 0, pt.NumMethod(); mi < nm; mi++ {
+			mt := pt.Method(mi)
+			if mt.PkgPath != "" {
+				continue // ignore unexported method
+			}
+			expBlackList[mt.Name] = struct{}{}
+		}
+	}
+
 	// plant collected exports into interpreter
 	hc.Lock()
 	defer hc.Unlock()
+
+	var apiText bytes.Buffer
 	for k, v := range exports {
+		if _, ok := expBlackList[k]; ok {
+			// in black list, skip
+			continue
+		}
 		hc.put(k, v)
+		apiText.WriteString(fmt.Sprintf(" * func - %s:\n\t%#v\n", k, v))
 	}
+	hc.put("API", apiText.String())
 }
+
+var expBlackList map[string]struct{}
