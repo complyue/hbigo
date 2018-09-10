@@ -40,7 +40,7 @@ type hoContext struct {
 	// embed a cancellable context
 	CancellableContext
 
-	poCtx Posting
+	po Posting
 
 	interp *fast.Interp // never change no need to sync
 }
@@ -48,13 +48,13 @@ type hoContext struct {
 func (ctx *hoContext) PoToPeer() Posting {
 	ctx.RLock()
 	defer ctx.RUnlock()
-	return ctx.poCtx
+	return ctx.po
 }
 
 func (ctx *hoContext) SetPoToPeer(p2p Posting) {
 	ctx.Lock()
 	defer ctx.Unlock()
-	ctx.poCtx = p2p
+	ctx.po = p2p
 }
 
 func (ctx *hoContext) Cancel(err error) {

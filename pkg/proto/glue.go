@@ -106,6 +106,14 @@ func PrepareHosting(ctx HoContext) {
 		apiText.WriteString(fmt.Sprintf(" * func - %s:\n\t%#v\n", k, v))
 	}
 	hc.put("API", apiText.String())
+
+	// plant some utility funcs
+	hc.put("pong", func() {}) // nop react to ping back
+	hc.put("ping", func() {   // react to connectivity test, pong back
+		if po := hc.po; po != nil {
+			po.Notif("pong()")
+		}
+	})
 }
 
 var expBlackList map[string]struct{}
