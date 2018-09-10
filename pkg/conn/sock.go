@@ -19,15 +19,16 @@ type TCPConn struct {
 /*
 Serve with a hosting context factory, at specified local address (host:port)
 */
-func ServeTCP(ctxFact func() HoContext, addr string) (listener *net.TCPListener, err error) {
+func ServeTCP(ctxFact func() HoContext, addr string, cb func(*net.TCPListener)) (err error) {
 	var raddr *net.TCPAddr
 	raddr, err = net.ResolveTCPAddr("tcp", addr)
 	if nil != err {
 		log.Fatal("addr error", err)
 		return
 	}
+	var listener *net.TCPListener
 	listener, err = net.ListenTCP("tcp", raddr)
-	glog.Infof("HBI server listening %s ...\n", listener.Addr())
+	cb(listener)
 
 	for {
 		var conn *net.TCPConn

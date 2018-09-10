@@ -85,7 +85,7 @@ func (room *Room) Post(from, content string) {
 					}
 				}()
 				p2p.Notif(fmt.Sprintf(`
-println(%#v, " ", %#v)
+println(%#v, %#v)
 `, room.name, msg.String()))
 			}()
 		} else {
@@ -115,11 +115,12 @@ func init() {
 }
 
 func prepareRoom(roomId string) (room *Room) {
+	var ok bool
 	room = lobby
 	if "" != roomId {
 		mu.Lock()
 		defer mu.Unlock()
-		room, ok := rooms[roomId]
+		room, ok = rooms[roomId]
 		if !ok {
 			room = NewRoom(roomId)
 			rooms[roomId] = room

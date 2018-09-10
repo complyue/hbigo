@@ -14,18 +14,11 @@ TODO:
 package hbi
 
 import (
-	"flag"
 	"github.com/complyue/hbigo/pkg/conn"
-	hbierrs "github.com/complyue/hbigo/pkg/errors"
 	"github.com/complyue/hbigo/pkg/proto"
-	"github.com/golang/glog"
-	"log"
 )
 
 type (
-	WireError  = hbierrs.WireError
-	UsageError = hbierrs.UsageError
-
 	HoContext = proto.HoContext
 
 	Hosting = proto.Hosting
@@ -38,15 +31,3 @@ var (
 	ServeTCP = conn.ServeTCP
 	DialTCP  = conn.DialTCP
 )
-
-func init() {
-	var err error
-
-	// change glog default destination to stderr
-	if glog.V(0) { // should always be true, mention glog so it defines its flags before we change them
-		if err = flag.CommandLine.Set("logtostderr", "true"); nil != err {
-			log.Printf("Failed changing glog default desitination, err: %s", err)
-		}
-	}
-
-}
