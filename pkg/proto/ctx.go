@@ -1,6 +1,7 @@
 package proto
 
 import (
+	. "github.com/complyue/hbigo/pkg/errors"
 	. "github.com/complyue/hbigo/pkg/util"
 	"github.com/cosmos72/gomacro/fast"
 	"reflect"
@@ -76,6 +77,14 @@ func (ctx *hoContext) Close() {
 }
 
 func (ctx *hoContext) Exec(code string) (result interface{}, ok bool, err error) {
+	defer func() {
+		// gomacro Eval may panic, convert it to returned error here
+		if e := recover(); e != nil {
+			ok = false
+			err = RichError(e)
+		}
+	}()
+
 	// no lock as meant to be called only from landing goro
 	rvs, _ := ctx.interp.Eval(code)
 	switch len(rvs) {

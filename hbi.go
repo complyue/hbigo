@@ -20,6 +20,7 @@ import (
 
 type (
 	HoContext = proto.HoContext
+	TCPConn   = conn.TCPConn
 
 	Hosting = proto.Hosting
 	Posting = proto.Posting

@@ -144,19 +144,19 @@ func (wire *TCPWire) recvPacket() (packet *Packet, err error) {
 			if ']' == c {
 				header := string(hdrBuf[0 : start+i+1])
 				if '[' != header[0] {
-					err = WireError{fmt.Sprintf("Invalid header: %s", header)}
+					err = NewWireError(fmt.Sprintf("Invalid header: %#v", header))
 					return
 				}
 				lenEnd := strings.Index(header, "#")
 				if -1 == lenEnd {
-					err = WireError{"No # in header!"}
+					err = NewWireError("No # in header!")
 					return
 				}
 				wireDir = string(header[lenEnd+1 : start+i])
 				var payloadLen int
 				fmt.Sscan(header[1:lenEnd], &payloadLen)
 				if payloadLen < 0 {
-					err = WireError{"Negative payload length!"}
+					err = NewWireError("Negative payload length!")
 					return
 				}
 				chunkLen := newLen - i - 1
@@ -171,7 +171,7 @@ func (wire *TCPWire) recvPacket() (packet *Packet, err error) {
 			break
 		}
 		if newLen >= MaxHeaderLen {
-			err = &WireError{fmt.Sprintf("No header within first %v bytes!", MaxHeaderLen)}
+			err = NewWireError(fmt.Sprintf("No header within first %v bytes!", MaxHeaderLen))
 			return
 		}
 	}

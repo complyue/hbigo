@@ -54,7 +54,7 @@ type coConv struct {
 
 func (co *coConv) CoGet(code string) (result interface{}, err error) {
 	if co.po.co != co {
-		panic(UsageError{"CoConv mismatch ?!"})
+		panic(NewUsageError("CoConv mismatch ?!"))
 	}
 	_, err = co.po.sendPacket(code, "")
 	if err != nil {
@@ -66,7 +66,7 @@ func (co *coConv) CoGet(code string) (result interface{}, err error) {
 
 func (co *coConv) CoSendCode(code string) (err error) {
 	if co.po.co != co {
-		panic(UsageError{"CoConv mismatch ?!"})
+		panic(NewUsageError("CoConv mismatch ?!"))
 	}
 	_, err = co.po.sendPacket(code, "")
 	return
@@ -74,7 +74,7 @@ func (co *coConv) CoSendCode(code string) (err error) {
 
 func (co *coConv) CoSendData(data <-chan []byte) (err error) {
 	if co.po.co != co {
-		panic(UsageError{"CoConv mismatch ?!"})
+		panic(NewUsageError("CoConv mismatch ?!"))
 	}
 	_, err = co.po.sendData(data)
 	return
@@ -82,7 +82,7 @@ func (co *coConv) CoSendData(data <-chan []byte) (err error) {
 
 func (co *coConv) CoRecvObj() (result interface{}, err error) {
 	if co.po.co != co {
-		panic(UsageError{"CoConv mismatch ?!"})
+		panic(NewUsageError("CoConv mismatch ?!"))
 	}
 	result, err = co.po.ho.coRecvObj()
 	return
@@ -90,7 +90,7 @@ func (co *coConv) CoRecvObj() (result interface{}, err error) {
 
 func (co *coConv) CoRecvData(data <-chan []byte) (err error) {
 	if co.po.co != co {
-		panic(UsageError{"CoConv mismatch ?!"})
+		panic(NewUsageError("CoConv mismatch ?!"))
 	}
 	err = co.po.ho.coRecvData(data)
 	return

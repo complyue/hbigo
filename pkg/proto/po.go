@@ -83,7 +83,7 @@ func (po *PostingEndpoint) Co() CoConv {
 	po.muSend.Lock()
 	po.muCo.Lock()
 	if po.co != nil {
-		panic(UsageError{"Unclean co on po ?!"})
+		panic(NewUsageError("Unclean co on po ?!"))
 		// todo prevent deadlock ?
 	}
 	po.co = newCoConv(po)
@@ -102,7 +102,7 @@ func (po *PostingEndpoint) CoId() string {
 
 func (po *PostingEndpoint) coDone(co CoConv) {
 	if co != po.co {
-		panic(UsageError{"Unmatched coDone ?!"})
+		panic(NewUsageError("Unmatched coDone ?!"))
 		// todo prevent deadlock ?
 	}
 	po.sendPacket(po.co.id, "co_end")

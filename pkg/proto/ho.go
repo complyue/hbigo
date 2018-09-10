@@ -4,7 +4,6 @@ import (
 	"fmt"
 	. "github.com/complyue/hbigo/pkg/errors"
 	"github.com/golang/glog"
-	"github.com/pkg/errors"
 )
 
 type Hosting interface {
@@ -64,7 +63,7 @@ func (ho *HostingEndpoint) CoId() string {
 
 func (ho *HostingEndpoint) CoRecvObj() (result interface{}, err error) {
 	if ho.coId == "" {
-		panic(UsageError{"Not in corun mode ?!"})
+		panic(NewUsageError("Not in corun mode ?!"))
 	}
 	result, err = ho.coRecvObj()
 	return
@@ -83,7 +82,7 @@ func (ho *HostingEndpoint) coRecvObj() (result interface{}, err error) {
 
 func (ho *HostingEndpoint) CoRecvData(data <-chan []byte) (err error) {
 	if ho.coId == "" {
-		panic(UsageError{"Not in corun mode ?!"})
+		panic(NewUsageError("Not in corun mode ?!"))
 	}
 	err = ho.coRecvData(data)
 	return
@@ -101,16 +100,10 @@ func (ho *HostingEndpoint) StartLandingLoop() {
 func (ho *HostingEndpoint) landingLoop() {
 	defer func() {
 		// disconnect wire, don't crash the whole process
-		if e := recover(); e != nil {
-			var err error
-			if e, ok := e.(error); ok {
-				err = e
-			} else {
-				err = errors.New(fmt.Sprintf("%v", e))
-			}
-			err = errors.Wrap(err, "HBI landing error")
-			glog.Errorf("%+v", err)
-			ho.Cancel(err)
+		if err := recover(); err != nil {
+			e := RichError(err)
+			glog.Errorf("HBI landing error: %+v", e)
+			ho.Cancel(e)
 		}
 	}()
 
@@ -122,20 +115,14 @@ func (ho *HostingEndpoint) landingLoop() {
 	// a packet contains just two strings,
 	// it's more optimal to pass value over channel
 
-	// packet receiving goroutine
+	// packet receiving loop
 	go func() {
 		defer func() {
 			// disconnect wire, don't crash the whole process
-			if e := recover(); e != nil {
-				var err error
-				if e, ok := e.(error); ok {
-					err = e
-				} else {
-					err = errors.New(fmt.Sprintf("%v", e))
-				}
-				err = errors.Wrap(err, "HBI receiving error")
-				glog.Errorf("%+v", err)
-				ho.Cancel(err)
+			if err := recover(); err != nil {
+				e := RichError(err)
+				glog.Errorf("HBI receiving error: %+v", e)
+				ho.Cancel(e)
 			}
 		}()
 
@@ -189,8 +176,8 @@ func (ho *HostingEndpoint) landingLoop() {
 			switch pkt.WireDir {
 			case "":
 				if result, ok, err := ho.Exec(pkt.Payload); err != nil {
-					ho.Cancel(err)
-					return
+					// panic to stop the loop, will be logged by deferred err handler above
+					panic(NewPacketError(err, pkt))
 				} else if ok {
 					if ho.coId != "" {
 						// in corun conversation, send it via chObj to a pending CoRecvObj() call
@@ -204,18 +191,18 @@ func (ho *HostingEndpoint) landingLoop() {
 			case "corun":
 				// unidirectional wire, assume implicit co_begin/co_end
 				if ho.coId != "" {
-					panic(UsageError{"corun reentrance ?!"})
+					panic(NewPacketError("corun reentrance ?!", pkt))
 				}
 				func() {
 					if p2p := ho.PoToPeer(); p2p != nil {
 						// bidirectional wire, land corun code in a corun conversation
 						if p2p.CoId() != "" {
-							panic(UsageError{"corun reentrance ?!"})
+							panic(NewPacketError("corun reentrance ?!", pkt))
 						}
 						co := p2p.Co()
 						defer co.Close()
 						if _, _, err := ho.Exec(pkt.Payload); err != nil {
-							ho.Cancel(err)
+							panic(NewPacketError("exec failure", pkt))
 						}
 					} else {
 						ho.coId = fmt.Sprintf("%p", &pkt.Payload)
@@ -223,56 +210,50 @@ func (ho *HostingEndpoint) landingLoop() {
 							ho.coId = ""
 						}()
 						if _, _, err := ho.Exec(pkt.Payload); err != nil {
-							ho.Cancel(err)
+							panic(NewPacketError("exec failure", pkt))
 						}
 					}
 				}()
 			case "coget":
 				if ho.coId == "" {
-					panic(WireError{"coget without corun conversation ?!"})
+					panic(NewWireError("coget without corun conversation ?!"))
 				}
 				switch p2p := ho.PoToPeer(); po := p2p.(type) {
 				case *PostingEndpoint:
 					if result, ok, err := ho.Exec(pkt.Payload); err != nil {
-						ho.Cancel(err)
+						panic(NewPacketError("exec failure", pkt))
 					} else if ok {
 						po.sendPacket(fmt.Sprintf("%#v", result), "")
 					} else {
-						panic(UsageError{"coget code landed as void ?!"})
+						panic(NewPacketError("coget code exec to void ?!", pkt))
 					}
 				case nil:
-					panic(UsageError{"coget via unidirectional wire ?!"})
+					panic(NewPacketError("coget via unidirectional wire ?!", pkt))
 				default:
-					panic(UsageError{fmt.Sprintf("Unexpected p2p type %T", p2p)})
+					panic(NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
 				}
 			case "co_begin":
 				if ho.coId != "" {
-					err := WireError{fmt.Sprintf(
+					panic(NewPacketError(fmt.Sprintf(
 						"Unexpected co_begin [%s]=>[%s]", ho.coId, pkt.Payload,
-					)}
-					glog.Error(err)
-					ho.Cancel(err)
-					return
+					), pkt))
 				}
 				switch p2p := ho.PoToPeer(); po := p2p.(type) {
 				case *PostingEndpoint:
 					po.muSend.Lock()
 					po.muCo.Lock()
+					ho.coId = pkt.Payload
 					po.sendPacket(pkt.Payload, "co_ack")
 				case nil:
-					// nop
+					ho.coId = pkt.Payload
 				default:
-					panic(UsageError{fmt.Sprintf("Unexpected p2p type %T", p2p)})
+					panic(NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
 				}
-				ho.coId = pkt.Payload
 			case "co_end":
 				if ho.coId != pkt.Payload {
-					err := WireError{fmt.Sprintf(
+					panic(NewPacketError(fmt.Sprintf(
 						"Unexpected co_end [%s]!=[%s]", pkt.Payload, ho.coId,
-					)}
-					glog.Error(err)
-					ho.Cancel(err)
-					return
+					), pkt))
 				}
 				switch p2p := ho.PoToPeer(); po := p2p.(type) {
 				case *PostingEndpoint:
@@ -280,32 +261,31 @@ func (ho *HostingEndpoint) landingLoop() {
 					po.muCo.Unlock()
 					po.muSend.Unlock()
 				case nil:
-					// nop
+					ho.coId = ""
 				default:
-					panic(UsageError{fmt.Sprintf("Unexpected p2p type %T", p2p)})
+					panic(NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
 				}
 			case "co_ack":
 				switch p2p := ho.PoToPeer(); po := p2p.(type) {
 				case *PostingEndpoint:
 					if pkt.Payload != po.co.Id() {
-						err := WireError{fmt.Sprintf(
-							"Unexpected co_ack [%s]!=[%s]", pkt.Payload, po.co.Id,
-						)}
-						glog.Error(err)
-						ho.Cancel(err)
-						return
+						panic(NewPacketError(fmt.Sprintf(
+							"Unexpected co_ack [%s]!=[%s]", pkt.Payload, po.co.id,
+						), pkt))
 					}
+					// TODO play with chObj
 				case nil:
-					// nop
+					// TODO play with chObj
 				default:
-					panic(UsageError{fmt.Sprintf("Unexpected p2p type %T", p2p)})
+					panic(NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
 				}
 			case "err":
 				// peer error occurred, todo give context package opportunity to handle peer error
 				glog.Fatal("HBI disconnecting due to peer error: ", pkt.Payload)
 				ho.Close()
+				return
 			default:
-				panic("Unexpected packet: " + pkt.String())
+				panic(NewPacketError("Unexpected packet", pkt))
 			}
 		}
 
