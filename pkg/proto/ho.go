@@ -28,6 +28,7 @@ type HostingEndpoint struct {
 	netIdent   string
 	recvPacket func() (*Packet, error)
 	recvData   func(data <-chan []byte) (n int64, err error)
+	closer     func() error
 
 	// used to pump landed objects from landing loop goro to application goro
 	chObj chan interface{}
@@ -50,10 +51,12 @@ func (ho *HostingEndpoint) PlugWire(
 	netIdent string,
 	recvPacket func() (*Packet, error),
 	recvData func(data <-chan []byte) (n int64, err error),
+	closer func() error,
 ) {
 	ho.netIdent = netIdent
 	ho.recvPacket = recvPacket
 	ho.recvData = recvData
+	ho.closer = closer
 }
 
 func (ho *HostingEndpoint) CoId() string {
@@ -281,7 +284,7 @@ func (ho *HostingEndpoint) landingLoop() {
 				}
 			case "err":
 				// peer error occurred, todo give context package opportunity to handle peer error
-				glog.Fatal("HBI disconnecting due to peer error: ", pkt.Payload)
+				glog.Error("HBI disconnecting due to peer error: ", pkt.Payload)
 				ho.Close()
 				return
 			default:
@@ -293,4 +296,35 @@ func (ho *HostingEndpoint) landingLoop() {
 		chProc <- struct{}{}
 	}
 
+}
+
+func (ho *HostingEndpoint) Cancel(err error) {
+	// make sure the done channel is closed anyway
+	defer ho.HoContext.Cancel(err)
+
+	ho.Lock()
+	defer ho.Unlock()
+
+	closer := ho.closer
+	if closer == nil {
+		// do close only once, if ho.closer is nil, it's already closed
+		return
+	}
+	ho.closer = nil
+	// cut the wire at last anyway
+	defer func() {
+		if e := recover(); e != nil {
+			glog.Warningf("Error before closing hosting wire: %+v\n", RichError(e))
+		}
+		if e := closer(); e != nil {
+			glog.Warningf("Error when closing hosting wire: %+v\n", RichError(e))
+		}
+	}()
+
+	// todo some cleanup here ?
+
+}
+
+func (ho *HostingEndpoint) Close() {
+	ho.Cancel(nil)
 }

@@ -16,6 +16,16 @@ type TCPConn struct {
 	Posting
 }
 
+func (hbic *TCPConn) Cancel(err error) {
+	defer hbic.Hosting.Cancel(err)
+	defer hbic.Posting.Cancel(err)
+}
+
+func (hbic *TCPConn) Close() {
+	defer hbic.Hosting.Close()
+	defer hbic.Posting.Close()
+}
+
 /*
 Serve with a hosting context factory, at specified local address (host:port)
 */
@@ -48,14 +58,14 @@ func ServeTCP(ctxFact func() HoContext, addr string, cb func(*net.TCPListener)) 
 			CancellableContext: ho,
 			conn:               conn,
 		}
-		ho.PlugWire(netIdent, hoWire.recvPacket, hoWire.recvData)
+		ho.PlugWire(netIdent, hoWire.recvPacket, hoWire.recvData, conn.CloseRead)
 
 		po := NewPostingEndpoint()
 		poWire := TCPWire{
 			CancellableContext: po,
 			conn:               conn,
 		}
-		po.PlugWire(netIdent, poWire.sendPacket, poWire.sendData, ho)
+		po.PlugWire(netIdent, poWire.sendPacket, poWire.sendData, conn.CloseWrite, ho)
 
 		ho.SetPoToPeer(po)
 
@@ -85,14 +95,14 @@ func DialTCP(ctx HoContext, addr string) (hbic *TCPConn, err error) {
 		CancellableContext: ho,
 		conn:               conn,
 	}
-	ho.PlugWire(netIdent, hoWire.recvPacket, hoWire.recvData)
+	ho.PlugWire(netIdent, hoWire.recvPacket, hoWire.recvData, conn.CloseRead)
 
 	po := NewPostingEndpoint()
 	poWire := TCPWire{
 		CancellableContext: po,
 		conn:               conn,
 	}
-	po.PlugWire(netIdent, poWire.sendPacket, poWire.sendData, ho)
+	po.PlugWire(netIdent, poWire.sendPacket, poWire.sendData, conn.CloseWrite, ho)
 
 	ho.SetPoToPeer(po)
 

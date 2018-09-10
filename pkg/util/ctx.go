@@ -55,7 +55,7 @@ func (ctx *cancellableContext) Cancelled() bool {
 func (ctx *cancellableContext) Cancel(err error) {
 	ctx.Lock()
 	defer ctx.Unlock()
-	if err != nil {
+	if err != nil { // preserve last non-nil error if multiple cancellations have been requested
 		ctx.err = err
 	}
 	if done := ctx.done; done != closedChan {

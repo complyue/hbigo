@@ -1,8 +1,10 @@
 package proto
 
 import (
+	"fmt"
 	. "github.com/complyue/hbigo/pkg/errors"
 	. "github.com/complyue/hbigo/pkg/util"
+	"github.com/golang/glog"
 	"sync"
 )
 
@@ -39,6 +41,7 @@ type PostingEndpoint struct {
 	netIdent   string
 	sendPacket func(payload, wireDir string) (n int64, err error)
 	sendData   func(data <-chan []byte) (n int64, err error)
+	closer     func() error
 	ho         *HostingEndpoint
 
 	muSend, muCo sync.Mutex
@@ -53,11 +56,13 @@ func (po *PostingEndpoint) PlugWire(
 	netIdent string,
 	sendPacket func(payload, wireDir string) (n int64, err error),
 	sendData func(data <-chan []byte) (n int64, err error),
+	closer func() error,
 	ho *HostingEndpoint,
 ) {
 	po.netIdent = netIdent
 	po.sendPacket = sendPacket
 	po.sendData = sendData
+	po.closer = closer
 	po.ho = ho
 }
 
@@ -112,24 +117,41 @@ func (po *PostingEndpoint) coDone(co CoConv) {
 }
 
 func (po *PostingEndpoint) Cancel(err error) {
+	// make sure the done channel is closed anyway
+	defer po.CancellableContext.Cancel(err)
+
 	po.Lock()
 	defer po.Unlock()
+
+	closer := po.closer
+	if closer == nil {
+		// do close only once, if po.closer is nil, it's already closed
+		return
+	}
+	po.closer = nil
+	// cut the wire at last anyway
+	defer func() {
+		if e := recover(); e != nil {
+			glog.Warningf("Error before closing posting wire: %+v\n", RichError(e))
+		}
+		if e := closer(); e != nil {
+			glog.Warningf("Error when closing posting wire: %+v\n", RichError(e))
+		}
+	}()
+
 	// make sure corun context cancelled as well
 	if co := po.co; co != nil {
-		po.co = nil
 		co.Cancel(err)
 	}
-	po.CancellableContext.Cancel(err)
+
+	if err != nil {
+		po.muSend.Lock()
+		defer po.muSend.Unlock()
+		// try send full error info to peer before closer
+		po.sendPacket(fmt.Sprintf("%+v", RichError(err)), "err")
+	}
 }
 
 func (po *PostingEndpoint) Close() {
-	po.Lock()
-	defer po.Unlock()
-	// make sure posting context closed with hosting context
-	if co := po.co; co != nil {
-		po.co = nil
-		co.Close()
-	}
-	// make sure done channel closed
 	po.Cancel(nil)
 }

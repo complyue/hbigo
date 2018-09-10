@@ -96,13 +96,20 @@ func (co *coConv) CoRecvData(data <-chan []byte) (err error) {
 	return
 }
 
-func (co *coConv) Close() {
+func (co *coConv) Cancel(err error) {
+	// make sure the done channel is closed anyway
+	defer co.CancellableContext.Cancel(err)
+
 	if co.po == nil {
 		// already closed
 		return
 	}
 	co.po.coDone(co)
 	co.po = nil
+}
+
+func (co *coConv) Close() {
+	co.Cancel(nil)
 }
 
 func (co *coConv) Id() string {

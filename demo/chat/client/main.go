@@ -3,9 +3,12 @@ package main
 import (
 	"flag"
 	"github.com/complyue/hbigo"
+	. "github.com/complyue/hbigo/pkg/errors"
 	"github.com/golang/glog"
 	"github.com/peterh/liner"
+	"io"
 	"log"
+	"os"
 )
 
 func init() {
@@ -21,14 +24,24 @@ func init() {
 }
 
 func main() {
+	var err error
+	defer func() {
+		// disconnect wire, don't crash the whole process
+		if err := recover(); err != nil {
+			glog.Errorf("Unexpected error: %+v", RichError(err))
+			os.Exit(3)
+		}
+	}()
 
 	flag.Parse()
 
-	hbic, err := hbi.DialTCP(hbi.NewHoContext(), "localhost:3232")
+	var hbic *hbi.TCPConn
+	hbic, err = hbi.DialTCP(hbi.NewHoContext(), "localhost:3232")
 	if err != nil {
 		log.Fatal(err)
 		return
 	}
+	defer hbic.Close()
 
 	line := liner.NewLiner()
 	defer line.Close()
@@ -41,15 +54,20 @@ func main() {
 			break
 		}
 
-		code, err := line.Prompt("hbi chat> ")
+		code, err := line.Prompt("hbi-chat> ")
 		if err != nil {
-			log.Fatal(err)
-			return
+			switch err {
+			case io.EOF: // Ctrl^D
+			case liner.ErrPromptAborted: // Ctrl^C
+			default:
+				panic(err)
+			}
+			break
 		}
 
 		hbic.Notif(code)
 	}
 
-	log.Printf("Done.")
+	log.Printf("Bye.")
 
 }
