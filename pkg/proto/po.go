@@ -87,6 +87,7 @@ func (po *PostingEndpoint) Co() CoConv {
 		// todo prevent deadlock ?
 	}
 	po.co = newCoConv(po)
+	po.sendPacket(po.co.id, "co_begin")
 	return po.co
 }
 
@@ -104,6 +105,7 @@ func (po *PostingEndpoint) coDone(co CoConv) {
 		panic(UsageError{"Unmatched coDone ?!"})
 		// todo prevent deadlock ?
 	}
+	po.sendPacket(po.co.id, "co_end")
 	po.co = nil
 	po.muCo.Unlock()
 	po.muSend.Unlock()
