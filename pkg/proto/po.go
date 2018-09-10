@@ -20,6 +20,7 @@ type Posting interface {
 	NotifCoRun(code string, data <-chan []byte) (err error)
 
 	Co() (co CoConv)
+	CoId() string
 
 	Close()
 }
@@ -87,6 +88,15 @@ func (po *PostingEndpoint) Co() CoConv {
 	}
 	po.co = newCoConv(po)
 	return po.co
+}
+
+func (po *PostingEndpoint) CoId() string {
+	// todo need RLock for concurrent read ?
+	if po.co == nil {
+		return ""
+	} else {
+		return po.co.id
+	}
 }
 
 func (po *PostingEndpoint) coDone(co CoConv) {
