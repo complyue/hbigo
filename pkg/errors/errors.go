@@ -6,6 +6,12 @@ import (
 	"io"
 )
 
+var (
+	New   = errors.New
+	Wrap  = errors.Wrap
+	Wrapf = errors.Wrapf
+)
+
 // github.com/pkg/errors can be formatted with rich information, including stacktrace, see:
 // 	https://godoc.org/github.com/pkg/errors#hdr-Formatted_printing_of_errors
 type richError interface {

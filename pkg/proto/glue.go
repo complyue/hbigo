@@ -88,6 +88,8 @@ func PrepareHosting(ctx HoContext) {
 			}
 			expBlackList[mt.Name] = struct{}{}
 		}
+		// white list some useful methods
+		delete(expBlackList, "PoToPeer")
 	}
 
 	// plant collected exports into interpreter

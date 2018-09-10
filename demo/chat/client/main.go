@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 	"github.com/complyue/hbigo"
-	. "github.com/complyue/hbigo/pkg/errors"
+	"github.com/complyue/hbigo/pkg/errors"
 	"github.com/golang/glog"
 	"github.com/peterh/liner"
 	"io"
@@ -23,23 +23,27 @@ func init() {
 
 }
 
+var (
+	peerAddr string
+)
+
+func init() {
+	flag.StringVar(&peerAddr, "peer", "localhost:3232", "HBI peer address")
+}
+
 func main() {
-	var err error
 	defer func() {
-		// disconnect wire, don't crash the whole process
 		if err := recover(); err != nil {
-			glog.Errorf("Unexpected error: %+v", RichError(err))
+			glog.Errorf("Unexpected error: %+v", errors.RichError(err))
 			os.Exit(3)
 		}
 	}()
 
 	flag.Parse()
 
-	var hbic *hbi.TCPConn
-	hbic, err = hbi.DialTCP(hbi.NewHoContext(), "localhost:3232")
+	hbic, err := hbi.DialTCP(hbi.NewHoContext(), peerAddr)
 	if err != nil {
-		log.Fatal(err)
-		return
+		panic(errors.Wrap(err, "Connection error"))
 	}
 	defer hbic.Close()
 
@@ -54,13 +58,13 @@ func main() {
 			break
 		}
 
-		code, err := line.Prompt("hbi-chat> ")
+		code, err := line.Prompt("chat> ")
 		if err != nil {
 			switch err {
 			case io.EOF: // Ctrl^D
 			case liner.ErrPromptAborted: // Ctrl^C
 			default:
-				panic(err)
+				panic(errors.RichError(err))
 			}
 			break
 		}
