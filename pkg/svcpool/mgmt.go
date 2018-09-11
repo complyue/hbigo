@@ -30,6 +30,7 @@ type master4consumer struct {
 	assignedWorker *procWorker
 }
 
+// co send back the service proc address assigned
 func (m4c *master4consumer) AssignProc(session string, sticky bool) {
 	if session == "" && sticky {
 		panic(errors.NewUsageError("Requesting sticky session to empty id ?!"))
@@ -50,8 +51,10 @@ func (m4c *master4consumer) AssignProc(session string, sticky bool) {
 	))
 }
 
+// co send back true if the proc is idle after this release, false if its still assigned to some other consumers.
 func (m4c *master4consumer) ReleaseProc(procAddr string) {
 	// TODO mark the worker as idle after all consumer released it
+	m4c.PoToPeer().CoSendCode(`false`)
 }
 
 func (pool *Master) assignProc(consumer *master4consumer) (procPort int) {
