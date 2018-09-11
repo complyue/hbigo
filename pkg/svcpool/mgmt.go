@@ -7,6 +7,7 @@ import (
 	"github.com/golang/glog"
 	"net"
 	"os"
+	"os/exec"
 	"syscall"
 	"time"
 )
@@ -58,6 +59,7 @@ func (m4c *master4consumer) ReleaseProc(procAddr string) {
 }
 
 func (pool *Master) assignProc(consumer *master4consumer) (procPort int) {
+	var err error
 	var ok bool
 	var worker *procWorker
 	// prepare worker proc anyway before actual return
@@ -91,7 +93,10 @@ func (pool *Master) assignProc(consumer *master4consumer) (procPort int) {
 			len(pool.idleWorkers), len(pool.pendingWorkers), pool.poolSize,
 		)
 		for ; idleQuota > 0; idleQuota-- {
-			newProcWorker(pool)
+			_, err = newProcWorker(pool)
+			if err != nil {
+				panic(errors.RichError(err))
+			}
 		}
 	}
 
@@ -172,16 +177,22 @@ func (pool *Master) registerWorker(pid int, procPort int, ho hbi.Hosting) (w *pr
 		w.restartProcess(ho.Err())
 	}()
 
+	glog.V(1).Infof("Registered service proc worker process [pid=%d,port=%d].", w.proc.Pid, procPort)
 	return
 }
 
-func newProcWorker(pool *Master) *procWorker {
-	worker := &procWorker{
+func newProcWorker(pool *Master) (worker *procWorker, err error) {
+	worker = &procWorker{
 		pool: pool,
 	}
+	err = worker.startProcess()
+	if err != nil {
+		err = errors.Wrap(err, "Failed start service proce worker process!")
+		glog.Error(err)
+		return
+	}
 	pool.allWorkers[worker] = struct{}{}
-	worker.startProcess()
-	return worker
+	return
 }
 
 type procWorker struct {
@@ -204,20 +215,19 @@ func (w *procWorker) startProcess() (err error) {
 		delete(w.pool.workersBySession, w.lastSession)
 		w.lastSession = ""
 	}
-	w.pool.pendingWorkers[w] = time.Now()
 	var exePath string
 	exePath, err = os.Executable()
 	if err != nil {
 		return
 	}
-	w.proc, err = os.StartProcess(
-		exePath, []string{
-			"-team", w.pool.teamAddr.String(),
-		}, &os.ProcAttr{},
-	)
+	cmd := exec.Command(exePath, "-team", w.pool.teamAddr.String())
+	err = cmd.Start()
 	if err != nil {
 		return
 	}
+	w.proc = cmd.Process
+	glog.V(1).Infof("Started service proc worker process [pid=%d].", w.proc.Pid)
+	w.pool.pendingWorkers[w] = time.Now()
 	w.pool.workersByPid[w.proc.Pid] = w
 	return
 }

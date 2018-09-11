@@ -58,12 +58,16 @@ func (pool *Master) Serve(serviceAddr string) {
 		hbi.ServeTCP(func() hbi.HoContext {
 			return newMaster4Worker(pool)
 		}, "127.0.0.1:0", func(listener *net.TCPListener) {
-			glog.Infof("HBI Service team addr: %+v\n", listener.Addr())
+			glog.Infof("HBI service team addr: %+v\n", listener.Addr())
 			pool.teamAddr = listener.Addr().(*net.TCPAddr)
 
 			// start hot back processes
 			for i := 0; i < pool.hotBack; i++ {
-				newProcWorker(pool)
+				_, err := newProcWorker(pool)
+				if err != nil {
+					// crash the process
+					glog.Fatal(errors.RichError(err))
+				}
 			}
 		})
 	}()
@@ -72,7 +76,7 @@ func (pool *Master) Serve(serviceAddr string) {
 	hbi.ServeTCP(func() hbi.HoContext {
 		return newMaster4Consumer(pool)
 	}, serviceAddr, func(listener *net.TCPListener) {
-		glog.Infof("Pool service addr: %+v\n", listener.Addr())
+		glog.Infof("HBI service pool addr: %+v\n", listener.Addr())
 	})
 
 }

@@ -142,6 +142,8 @@ func DialTCP(ctx HoContext, addr string) (hbic *TCPConn, err error) {
 type tcpWire struct {
 	util.CancellableContext
 	conn *net.TCPConn
+
+	readahead []byte
 }
 
 func (wire tcpWire) sendPacket(payload, wireDir string) (n int64, err error) {
@@ -150,6 +152,39 @@ func (wire tcpWire) sendPacket(payload, wireDir string) (n int64, err error) {
 		[]byte(header), []byte(payload),
 	}
 	n, err = bufs.WriteTo(wire.conn)
+	return
+}
+
+// each []byte will have its len() of data sent, regardless of it cap()
+func (wire tcpWire) sendData(data <-chan []byte) (n int64, err error) {
+	var bufs net.Buffers
+	var nb int64
+	for {
+		select {
+		case <-wire.Done():
+			// context cancelled
+			return
+		case buf, ok := <-data:
+			if !ok {
+				// no more buf to send
+				break
+			}
+			if len(buf) <= 0 {
+				// zero buf, ignore it
+				break
+			}
+			bufs = append(bufs, buf)
+		}
+		if len(bufs) <= 0 {
+			// all data sent
+			return
+		}
+		nb, err = bufs.WriteTo(wire.conn)
+		if err != nil {
+			return
+		}
+		n += nb
+	}
 	return
 }
 
@@ -168,16 +203,31 @@ func (wire tcpWire) recvPacket() (packet *Packet, err error) {
 			return
 		}
 		start = len(hdrBuf)
-		n, err = wire.conn.Read(hdrBuf[start:cap(hdrBuf)])
-		if err == io.EOF {
-			if start+n <= 0 {
-				// normal EOF after full packet, return nil + EOF
+		readInto := hdrBuf[start:cap(hdrBuf)]
+		if wire.readahead != nil {
+			// consume readahead first
+			if len(wire.readahead) > len(readInto) {
+				n = len(readInto)
+				copy(readInto, wire.readahead[:n])
+				wire.readahead = wire.readahead[n:]
+			} else {
+				n = len(wire.readahead)
+				copy(readInto[:n], wire.readahead)
+				wire.readahead = nil
+			}
+		} else {
+			// no readahead, read wire
+			n, err = wire.conn.Read(readInto)
+			if err == io.EOF {
+				if start+n <= 0 {
+					// normal EOF after full packet, return nil + EOF
+					return
+				}
+				// fall through to receive this last packet, it's possible we already got the full data in hdrBuf
+			} else if err != nil {
+				// other error occurred
 				return
 			}
-			// fall through to receive this last packet, it's possible we already got the full data in hdrBuf
-		} else if err != nil {
-			// other error occurred
-			return
 		}
 		newLen = start + n
 		hdrBuf = hdrBuf[:newLen]
@@ -200,17 +250,22 @@ func (wire tcpWire) recvPacket() (packet *Packet, err error) {
 					err = errors.NewWireError("Negative payload length!")
 					return
 				}
-				chunkLen := newLen - i - 1
-				func() { // mysterious cap range problem, reproducible ?
-					defer func() {
-						if e := recover(); e != nil {
-							panic(errors.Wrapf(errors.RichError(e), "%v/%v", chunkLen, payloadLen))
-						}
-					}()
-					payloadBuf = make([]byte, chunkLen, payloadLen)
-				}()
-				if chunkLen > 0 {
-					copy(payloadBuf[:chunkLen], hdrBuf[i+1:newLen])
+				extraLen := newLen - i - 1
+				payloadBuf = make([]byte, 0, payloadLen)
+				if extraLen > payloadLen {
+					// got more data than this packet's payload
+					payloadBuf = payloadBuf[:payloadLen]
+					plEnd := i + 1 + payloadLen
+					copy(payloadBuf, hdrBuf[i+1:plEnd])
+					if wire.readahead == nil {
+						wire.readahead = hdrBuf[plEnd:newLen]
+					} else {
+						wire.readahead = append(hdrBuf[plEnd:newLen], wire.readahead...)
+					}
+				} else if extraLen > 0 {
+					// got some data but no more than this packet's payload
+					payloadBuf = payloadBuf[:extraLen]
+					copy(payloadBuf, hdrBuf[i+1:newLen])
 				}
 				break
 			}
@@ -248,44 +303,11 @@ func (wire tcpWire) recvPacket() (packet *Packet, err error) {
 	}
 	payload = string(payloadBuf)
 
-	packet = &Packet{wireDir, payload}
+	packet = &Packet{WireDir: wireDir, Payload: payload}
 	if err == io.EOF {
 		// clear EOF if got a complete packet.
 		// todo what if the underlying Reader not tolerating our next read passing EOF
 		err = nil
-	}
-	return
-}
-
-// each []byte will have its len() of data sent, regardless of it cap()
-func (wire tcpWire) sendData(data <-chan []byte) (n int64, err error) {
-	var bufs net.Buffers
-	var nb int64
-	for {
-		select {
-		case <-wire.Done():
-			// context cancelled
-			return
-		case buf, ok := <-data:
-			if !ok {
-				// no more buf to send
-				break
-			}
-			if len(buf) <= 0 {
-				// zero buf, ignore it
-				break
-			}
-			bufs = append(bufs, buf)
-		}
-		if len(bufs) <= 0 {
-			// all data sent
-			return
-		}
-		nb, err = bufs.WriteTo(wire.conn)
-		if err != nil {
-			return
-		}
-		n += nb
 	}
 	return
 }
