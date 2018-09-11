@@ -47,20 +47,30 @@ func (m4c *master4consumer) AssignProc(session string, sticky bool) {
 	))
 }
 
-func (m4c *master4consumer) ReleaseProc() {
-	panic(errors.New("Not impl."))
+func (m4c *master4consumer) ReleaseProc(procAddr string) {
+	// TODO mark the worker as idle after all consumer released it
 }
 
-func newMaster4Worker() hbi.HoContext {
+func newMaster4Worker(pool *Master) hbi.HoContext {
 	return &master4worker{
 		HoContext: hbi.NewHoContext(),
+
+		pool: pool,
 	}
 }
 
 type master4worker struct {
 	hbi.HoContext
+
+	pool *Master
+
+	worker *procWorker
 }
 
-func (m4w *master4worker) WorkerOnline(pid int) {
+func (m4w *master4worker) WorkerOnline(pid int, procPort int) {
+	m4w.worker = m4w.pool.registerWorker(pid, procPort, m4w.Ho())
+}
 
+func (m4w *master4worker) WorkerRetiring() {
+	m4w.worker.retired()
 }
