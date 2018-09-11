@@ -1,4 +1,4 @@
-package pool
+package svcpool
 
 import (
 	"fmt"
@@ -10,6 +10,49 @@ import (
 	"syscall"
 	"time"
 )
+
+func newMaster4Consumer(pool *Master) hbi.HoContext {
+	return &master4consumer{
+		HoContext: hbi.NewHoContext(),
+
+		pool: pool,
+	}
+}
+
+type master4consumer struct {
+	hbi.HoContext
+
+	pool *Master
+
+	session string
+	sticky  bool
+
+	assignedWorker *procWorker
+}
+
+func (m4c *master4consumer) AssignProc(session string, sticky bool) {
+	if session == "" && sticky {
+		panic(errors.NewUsageError("Requesting sticky session to empty id ?!"))
+	}
+
+	if m4c.sticky && session != m4c.session {
+		panic(errors.Errorf("Changing sticky session [%s]=>[%s] ?!", m4c.session, session))
+	}
+	m4c.session = session
+	m4c.sticky = sticky
+
+	procPort := m4c.pool.assignProc(m4c)
+	p2p := m4c.PoToPeer()
+	// a conversation should have been initiated by service consumer endpoint
+	p2p.CoSendCode(fmt.Sprintf(
+		// use the IP via which this consumer has connected to this pool
+		`"%s:%d"`, p2p.LocalAddr().(*net.IPAddr).String(), procPort,
+	))
+}
+
+func (m4c *master4consumer) ReleaseProc(procAddr string) {
+	// TODO mark the worker as idle after all consumer released it
+}
 
 func (pool *Master) assignProc(consumer *master4consumer) (procPort int) {
 	var ok bool
@@ -264,49 +307,6 @@ PrepareSession(%#v)
 func (w *procWorker) retired() {
 	// start a new process to replace the retired one
 	w.restartProcess(nil)
-}
-
-func newMaster4Consumer(pool *Master) hbi.HoContext {
-	return &master4consumer{
-		HoContext: hbi.NewHoContext(),
-
-		pool: pool,
-	}
-}
-
-type master4consumer struct {
-	hbi.HoContext
-
-	pool *Master
-
-	session string
-	sticky  bool
-
-	assignedWorker *procWorker
-}
-
-func (m4c *master4consumer) AssignProc(session string, sticky bool) {
-	if session == "" && sticky {
-		panic(errors.NewUsageError("Requesting sticky session to empty id ?!"))
-	}
-
-	if m4c.sticky && session != m4c.session {
-		panic(errors.Errorf("Changing sticky session [%s]=>[%s] ?!", m4c.session, session))
-	}
-	m4c.session = session
-	m4c.sticky = sticky
-
-	procPort := m4c.pool.assignProc(m4c)
-	p2p := m4c.PoToPeer()
-	// a conversation should have been initiated by service consumer endpoint
-	p2p.CoSendCode(fmt.Sprintf(
-		// use the IP via which this consumer has connected to this pool
-		`"%s:%d"`, p2p.LocalAddr().(*net.IPAddr).String(), procPort,
-	))
-}
-
-func (m4c *master4consumer) ReleaseProc(procAddr string) {
-	// TODO mark the worker as idle after all consumer released it
 }
 
 func newMaster4Worker(pool *Master) hbi.HoContext {
