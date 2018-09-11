@@ -59,6 +59,7 @@ type Master struct {
 }
 
 func (pool *Master) assignProc(consumer *serviceConsumer) (procPort int) {
+	var ok bool
 	var worker *procWorker
 	// prepare worker proc anyway before actual return
 	defer func() {
@@ -76,6 +77,7 @@ func (pool *Master) assignProc(consumer *serviceConsumer) (procPort int) {
 			worker.prepareSession(consumer.session)
 			pool.workersBySession[worker.lastSession] = worker
 		}
+		consumer.assignedWorker = worker
 		procPort = worker.ProcPort // set return value
 	}()
 
@@ -100,6 +102,47 @@ func (pool *Master) assignProc(consumer *serviceConsumer) (procPort int) {
 	if worker != nil && worker.checkAlive() {
 		// this consumer has had a worker assigned, and still alive, reused it
 		return
+	}
+
+	if consumer.sticky && consumer.session != "" {
+		// if the consumer requests sticky session, and there's already a proc worker on the specified session,
+		// must assign this worker whether it is idle or not. concurrency/parallelism is offloaded to the proc impl.
+		if worker, ok = pool.workersBySession[consumer.session]; ok {
+			if worker.lastSession != consumer.session {
+				panic(errors.New("?!"))
+			}
+			if worker.checkAlive() {
+				return
+			}
+		}
+	}
+
+	// search for idle workers for this assignment
+	searchedWorkers := make(map[*procWorker]struct{})
+	for {
+		worker := <-pool.idleWorkers
+		if !worker.checkAlive() {
+			continue
+		}
+		if consumer.session == "" {
+			// session-less
+			if worker.lastSession == "" {
+				// ideal no-session match
+				return
+			}
+		} else if worker.lastSession == consumer.session {
+			// ideal session match
+			return
+		}
+		if _, ok = searchedWorkers[worker]; ok {
+			// reached a known idle worker, meaning we've searched all idle workers without ideal match,
+			// use this worker anyway
+			return
+		}
+		// record this idle worker as known, and continue searching for an ideal match
+		searchedWorkers[worker] = struct{}{}
+		// put it back to ideal cha
+		pool.idleWorkers <- worker
 	}
 
 	return

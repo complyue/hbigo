@@ -23,6 +23,9 @@ type master4consumer struct {
 }
 
 func (m4c *master4consumer) AssignProc(session string, sticky bool) {
+	if session == "" && sticky {
+		panic(errors.NewUsageError("Requesting sticky session to empty id ?!"))
+	}
 	consumer := m4c.consumer
 	if consumer == nil {
 		// first assignment request, create consumer object
