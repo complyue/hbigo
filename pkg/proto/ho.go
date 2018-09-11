@@ -94,7 +94,7 @@ func (ho *HostingEndpoint) PlugWire(
 
 func (ho *HostingEndpoint) CoRecvObj() (result interface{}, err error) {
 	if ho.CoId() == "" {
-		panic(errors.NewUsageError("Not in corun mode ?!"))
+		panic(errors.NewUsageError("Called without conversation ?!"))
 	}
 
 	result, err = ho.recvObj()
@@ -114,7 +114,7 @@ func (ho *HostingEndpoint) recvObj() (result interface{}, err error) {
 
 func (ho *HostingEndpoint) CoRecvData(data <-chan []byte) (err error) {
 	if ho.CoId() == "" {
-		panic(errors.NewUsageError("Not in corun mode ?!"))
+		panic(errors.NewUsageError("Called without conversation ?!"))
 	}
 
 	_, err = ho.recvData(data)
@@ -224,7 +224,7 @@ func (ho *HostingEndpoint) landingLoop() {
 						// in conversation, send it via chObj to a pending CoRecvObj() call
 						ho.chObj <- result
 					} else {
-						// not in corun mode, drop anyway, todo warn about it ?
+						// not in conversation, drop anyway, todo warn about it ?
 					}
 				} else {
 					// no result from execution, nop
