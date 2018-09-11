@@ -2,9 +2,10 @@ package proto
 
 import (
 	"fmt"
-	. "github.com/complyue/hbigo/pkg/errors"
+	"github.com/complyue/hbigo/pkg/errors"
 	"github.com/golang/glog"
 	"io"
+	"net"
 )
 
 type Hosting interface {
@@ -12,27 +13,20 @@ type Hosting interface {
 
 	// identity from the network's view
 	NetIdent() string
+	LocalAddr() net.Addr
+	RemoteAddr() net.Addr
 
+	// local hosting conversation id
 	CoId() string
 
+	// receive an inbound data object created by landing scripts sent by peer
+	// the scripts is expected to be sent from peer by `co.SendCode()`
 	CoRecvObj() (result interface{}, err error)
 
+	// receive an inbound binary data stream sent by peer
+	// actually it's expected to be sent from peer by `co.SendData()`, the size and layout
+	// should have been deducted from previous received data objects
 	CoRecvData(data <-chan []byte) (err error)
-}
-
-type HostingEndpoint struct {
-	HoContext
-
-	coId string
-
-	// Should be set by implementer
-	netIdent   string
-	recvPacket func() (*Packet, error)
-	recvData   func(data <-chan []byte) (n int64, err error)
-	closer     func() error
-
-	// used to pump landed objects from landing loop goro to application goro
-	chObj chan interface{}
 }
 
 func NewHostingEndpoint(ctx HoContext) *HostingEndpoint {
@@ -44,36 +38,70 @@ func NewHostingEndpoint(ctx HoContext) *HostingEndpoint {
 	}
 }
 
+type HostingEndpoint struct {
+	HoContext
+
+	coId string
+
+	// Should be set by implementer
+	netIdent              string
+	localAddr, remoteAddr net.Addr
+	recvPacket            func() (*Packet, error)
+	recvData              func(data <-chan []byte) (n int64, err error)
+	closer                func() error
+
+	// used to pump landed objects from landing loop goro to application goro
+	chObj chan interface{}
+}
+
+func (ho *HostingEndpoint) CoId() string {
+	ho.RLock()
+	defer ho.RUnlock()
+	return ho.coId
+}
+
+func (ho *HostingEndpoint) setCoId(coId string) {
+	ho.Lock()
+	defer ho.Unlock()
+	ho.coId = coId
+}
+
 func (ho *HostingEndpoint) NetIdent() string {
 	return ho.netIdent
 }
 
+func (ho *HostingEndpoint) LocalAddr() net.Addr {
+	return ho.localAddr
+}
+
+func (ho *HostingEndpoint) RemoteAddr() net.Addr {
+	return ho.remoteAddr
+}
+
 func (ho *HostingEndpoint) PlugWire(
-	netIdent string,
+	netIdent string, localAddr, remoteAddr net.Addr,
 	recvPacket func() (*Packet, error),
 	recvData func(data <-chan []byte) (n int64, err error),
 	closer func() error,
 ) {
 	ho.netIdent = netIdent
+	ho.localAddr = localAddr
+	ho.remoteAddr = remoteAddr
 	ho.recvPacket = recvPacket
 	ho.recvData = recvData
 	ho.closer = closer
 }
 
-func (ho *HostingEndpoint) CoId() string {
-	// todo should RLock ? as only meant to be called from conversation goro
-	return ho.coId
-}
-
 func (ho *HostingEndpoint) CoRecvObj() (result interface{}, err error) {
-	if ho.coId == "" {
-		panic(NewUsageError("Not in corun mode ?!"))
+	if ho.CoId() == "" {
+		panic(errors.NewUsageError("Not in corun mode ?!"))
 	}
-	result, err = ho.coRecvObj()
+
+	result, err = ho.recvObj()
 	return
 }
 
-func (ho *HostingEndpoint) coRecvObj() (result interface{}, err error) {
+func (ho *HostingEndpoint) recvObj() (result interface{}, err error) {
 	select {
 	case <-ho.Done():
 		// connection context cancelled
@@ -85,14 +113,10 @@ func (ho *HostingEndpoint) coRecvObj() (result interface{}, err error) {
 }
 
 func (ho *HostingEndpoint) CoRecvData(data <-chan []byte) (err error) {
-	if ho.coId == "" {
-		panic(NewUsageError("Not in corun mode ?!"))
+	if ho.CoId() == "" {
+		panic(errors.NewUsageError("Not in corun mode ?!"))
 	}
-	err = ho.coRecvData(data)
-	return
-}
 
-func (ho *HostingEndpoint) coRecvData(data <-chan []byte) (err error) {
 	_, err = ho.recvData(data)
 	return
 }
@@ -105,7 +129,7 @@ func (ho *HostingEndpoint) landingLoop() {
 	defer func() {
 		// disconnect wire, don't crash the whole process
 		if err := recover(); err != nil {
-			e := RichError(err)
+			e := errors.RichError(err)
 			glog.Errorf("HBI landing error: %+v", e)
 			ho.Cancel(e)
 		}
@@ -124,7 +148,7 @@ func (ho *HostingEndpoint) landingLoop() {
 		defer func() {
 			// disconnect wire, don't crash the whole process
 			if err := recover(); err != nil {
-				e := RichError(err)
+				e := errors.RichError(err)
 				glog.Errorf("HBI receiving error: %+v", e)
 				ho.Cancel(e)
 			}
@@ -194,10 +218,10 @@ func (ho *HostingEndpoint) landingLoop() {
 			case "":
 				if result, ok, err := ho.Exec(pkt.Payload); err != nil {
 					// panic to stop the loop, will be logged by deferred err handler above
-					panic(NewPacketError(err, pkt))
+					panic(errors.NewPacketError(err, pkt))
 				} else if ok {
 					if ho.coId != "" {
-						// in corun conversation, send it via chObj to a pending CoRecvObj() call
+						// in conversation, send it via chObj to a pending CoRecvObj() call
 						ho.chObj <- result
 					} else {
 						// not in corun mode, drop anyway, todo warn about it ?
@@ -208,50 +232,38 @@ func (ho *HostingEndpoint) landingLoop() {
 			case "corun":
 				// unidirectional wire, assume implicit co_begin/co_end
 				if ho.coId != "" {
-					panic(NewPacketError("corun reentrance ?!", pkt))
+					panic(errors.NewPacketError("corun reentrance ?!", pkt))
 				}
 				func() {
-					if p2p := ho.PoToPeer(); p2p != nil {
-						// bidirectional wire, land corun code in a corun conversation
-						if p2p.CoId() != "" {
-							panic(NewPacketError("corun reentrance ?!", pkt))
-						}
-						co := p2p.Co()
-						defer co.Close()
-						if _, _, err := ho.Exec(pkt.Payload); err != nil {
-							panic(NewPacketError("exec failure", pkt))
-						}
-					} else {
-						ho.coId = fmt.Sprintf("%p", &pkt.Payload)
-						defer func() {
-							ho.coId = ""
-						}()
-						if _, _, err := ho.Exec(pkt.Payload); err != nil {
-							panic(NewPacketError("exec failure", pkt))
-						}
+					ho.setCoId(fmt.Sprintf("%p", &pkt.Payload))
+					defer func() {
+						ho.setCoId("")
+					}()
+					if _, _, err := ho.Exec(pkt.Payload); err != nil {
+						panic(errors.NewPacketError("exec failure", pkt))
 					}
 				}()
 			case "coget":
 				if ho.coId == "" {
-					panic(NewWireError("coget without corun conversation ?!"))
+					panic(errors.NewWireError("coget without conversation ?!"))
 				}
 				switch p2p := ho.PoToPeer(); po := p2p.(type) {
 				case *PostingEndpoint:
 					if result, ok, err := ho.Exec(pkt.Payload); err != nil {
-						panic(NewPacketError("exec failure", pkt))
+						panic(errors.NewPacketError("exec failure", pkt))
 					} else if ok {
 						po.sendPacket(fmt.Sprintf("%#v", result), "")
 					} else {
-						panic(NewPacketError("coget code exec to void ?!", pkt))
+						panic(errors.NewPacketError("coget code exec to void ?!", pkt))
 					}
 				case nil:
-					panic(NewPacketError("coget via unidirectional wire ?!", pkt))
+					panic(errors.NewPacketError("coget via unidirectional wire ?!", pkt))
 				default:
-					panic(NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
+					panic(errors.NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
 				}
 			case "co_begin":
 				if ho.coId != "" {
-					panic(NewPacketError(fmt.Sprintf(
+					panic(errors.NewPacketError(fmt.Sprintf(
 						"Unexpected co_begin [%s]=>[%s]", ho.coId, pkt.Payload,
 					), pkt))
 				}
@@ -259,42 +271,60 @@ func (ho *HostingEndpoint) landingLoop() {
 				case *PostingEndpoint:
 					po.muSend.Lock()
 					po.muCo.Lock()
-					ho.coId = pkt.Payload
+					ho.setCoId(pkt.Payload)
 					po.sendPacket(pkt.Payload, "co_ack")
 				case nil:
-					ho.coId = pkt.Payload
+					ho.setCoId(pkt.Payload)
 				default:
-					panic(NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
+					panic(errors.NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
 				}
 			case "co_end":
-				if ho.coId != pkt.Payload {
-					panic(NewPacketError(fmt.Sprintf(
+				if pkt.Payload != ho.coId {
+					panic(errors.NewPacketError(fmt.Sprintf(
 						"Unexpected co_end [%s]!=[%s]", pkt.Payload, ho.coId,
 					), pkt))
 				}
 				switch p2p := ho.PoToPeer(); po := p2p.(type) {
 				case *PostingEndpoint:
-					ho.coId = ""
+					ho.setCoId("")
+					po.sendPacket("", "co_ack")
 					po.muCo.Unlock()
 					po.muSend.Unlock()
 				case nil:
-					ho.coId = ""
+					ho.setCoId("")
 				default:
-					panic(NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
+					panic(errors.NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
 				}
 			case "co_ack":
 				switch p2p := ho.PoToPeer(); po := p2p.(type) {
 				case *PostingEndpoint:
-					if pkt.Payload != po.co.Id() {
-						panic(NewPacketError(fmt.Sprintf(
-							"Unexpected co_ack [%s]!=[%s]", pkt.Payload, po.co.id,
-						), pkt))
+					if pkt.Payload != "" {
+						// ack to co_begin
+						// must match local posting co id, set as local hosting co id
+						localCoId := ""
+						func() {
+							po.RLock()
+							defer po.RUnlock()
+							if po.co != nil {
+								localCoId = po.co.id
+							}
+						}()
+						if pkt.Payload != localCoId {
+							panic(errors.NewPacketError(fmt.Sprintf(
+								"Unexpected co begin ack [%s]!=[%s]", pkt.Payload, localCoId,
+							), pkt))
+						}
+					} else {
+						// ack to co_end
+						// nothing more to do than clearing local hosting co id
+						// todo necessary to split co_ack into co_ack_begin+co_ack_end ?
 					}
-					// TODO play with chObj
+					// set or clear local hosting co id
+					ho.setCoId(pkt.Payload)
 				case nil:
-					// TODO play with chObj
+					ho.setCoId(pkt.Payload)
 				default:
-					panic(NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
+					panic(errors.NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
 				}
 			case "err":
 				// peer error occurred, todo give context package opportunity to handle peer error
@@ -302,7 +332,7 @@ func (ho *HostingEndpoint) landingLoop() {
 				ho.Close()
 				return
 			default:
-				panic(NewPacketError("Unexpected packet", pkt))
+				panic(errors.NewPacketError("Unexpected packet", pkt))
 			}
 		}
 
@@ -333,10 +363,10 @@ func (ho *HostingEndpoint) Cancel(err error) {
 	// cut the wire at last anyway
 	defer func() {
 		if e := recover(); e != nil {
-			glog.Warningf("Error before closing hosting wire: %+v\n", RichError(e))
+			glog.Warningf("Error before closing hosting wire: %+v\n", errors.RichError(e))
 		}
 		if e := closer(); e != nil {
-			glog.Warningf("Error when closing hosting wire: %+v\n", RichError(e))
+			glog.Warningf("Error when closing hosting wire: %+v\n", errors.RichError(e))
 		}
 	}()
 

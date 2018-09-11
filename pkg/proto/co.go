@@ -2,14 +2,14 @@ package proto
 
 import (
 	"fmt"
-	. "github.com/complyue/hbigo/pkg/errors"
+	"github.com/complyue/hbigo/pkg/errors"
 	. "github.com/complyue/hbigo/pkg/util"
 )
 
 /*
-A corun conversation
+A conversation established upon a posting wire.
 */
-type CoConv interface {
+type Conver interface {
 	// be a cancellable context
 	CancellableContext
 
@@ -22,28 +22,37 @@ type CoConv interface {
 	Ho() Hosting
 
 	// round trip request in rpc style
-	CoGet(code string) (result interface{}, err error)
+	Get(code string) (result interface{}, err error)
 
-	// outbound scripts, followed by data stream
-	CoSendCode(code string) (err error)
-	CoSendData(data <-chan []byte) (err error)
+	// send outbound scripts
+	SendCode(code string) (err error)
+	// send a binary data stream, the peer must understand the size and layout of this stream,
+	// from previous posted scripts, actually it's expected previous scripts do trigger peer side
+	// funcs to call `ho.CoRecvData()` with a chan of []byte buffers properly sized and laid out,
+	// matching []bytes series posted here.
+	SendData(data <-chan []byte) (err error)
 
-	// inbound scripts, followed by data stream
-	CoRecvObj() (result interface{}, err error)
-	CoRecvData(data <-chan []byte) (err error)
+	// receive an inbound data object created by landing scripts sent by peer
+	// the scripts is expected to be sent from peer by `po.CoSendCode()`
+	RecvObj() (result interface{}, err error)
+	// receive an inbound binary data stream sent by peer
+	// actually it's expected to be sent from peer by `po.CoSendData()`, the size and layout
+	// should have been deducted from previous received data objects
+	RecvData(data <-chan []byte) (err error)
 
+	// finish this conversation to release the wire for other traffic
 	Close()
 }
 
-func newCoConv(po *PostingEndpoint) *coConv {
-	co := &coConv{
+func newConver(po *PostingEndpoint) *conver {
+	co := &conver{
 		po: po,
 	}
 	co.id = fmt.Sprintf("%p", co)
 	return co
 }
 
-type coConv struct {
+type conver struct {
 	// embed a cancellable context
 	CancellableContext
 
@@ -52,51 +61,51 @@ type coConv struct {
 	po *PostingEndpoint
 }
 
-func (co *coConv) CoGet(code string) (result interface{}, err error) {
+func (co *conver) Get(code string) (result interface{}, err error) {
 	if co.po.co != co {
-		panic(NewUsageError("CoConv mismatch ?!"))
+		panic(errors.NewUsageError("Conver mismatch ?!"))
 	}
 	_, err = co.po.sendPacket(code, "")
 	if err != nil {
 		return
 	}
-	result, err = co.po.ho.coRecvObj()
+	result, err = co.po.ho.recvObj()
 	return
 }
 
-func (co *coConv) CoSendCode(code string) (err error) {
+func (co *conver) SendCode(code string) (err error) {
 	if co.po.co != co {
-		panic(NewUsageError("CoConv mismatch ?!"))
+		panic(errors.NewUsageError("Conver mismatch ?!"))
 	}
 	_, err = co.po.sendPacket(code, "")
 	return
 }
 
-func (co *coConv) CoSendData(data <-chan []byte) (err error) {
+func (co *conver) SendData(data <-chan []byte) (err error) {
 	if co.po.co != co {
-		panic(NewUsageError("CoConv mismatch ?!"))
+		panic(errors.NewUsageError("Conver mismatch ?!"))
 	}
 	_, err = co.po.sendData(data)
 	return
 }
 
-func (co *coConv) CoRecvObj() (result interface{}, err error) {
+func (co *conver) RecvObj() (result interface{}, err error) {
 	if co.po.co != co {
-		panic(NewUsageError("CoConv mismatch ?!"))
+		panic(errors.NewUsageError("Conver mismatch ?!"))
 	}
-	result, err = co.po.ho.coRecvObj()
+	result, err = co.po.ho.recvObj()
 	return
 }
 
-func (co *coConv) CoRecvData(data <-chan []byte) (err error) {
+func (co *conver) RecvData(data <-chan []byte) (err error) {
 	if co.po.co != co {
-		panic(NewUsageError("CoConv mismatch ?!"))
+		panic(errors.NewUsageError("Conver mismatch ?!"))
 	}
-	err = co.po.ho.coRecvData(data)
+	_, err = co.po.ho.recvData(data)
 	return
 }
 
-func (co *coConv) Cancel(err error) {
+func (co *conver) Cancel(err error) {
 	// make sure the done channel is closed anyway
 	defer co.CancellableContext.Cancel(err)
 
@@ -108,18 +117,18 @@ func (co *coConv) Cancel(err error) {
 	co.po = nil
 }
 
-func (co *coConv) Close() {
+func (co *conver) Close() {
 	co.Cancel(nil)
 }
 
-func (co *coConv) Id() string {
+func (co *conver) Id() string {
 	return co.id
 }
 
-func (co *coConv) Po() Posting {
+func (co *conver) Po() Posting {
 	return co.po
 }
 
-func (co *coConv) Ho() Hosting {
+func (co *conver) Ho() Hosting {
 	return co.po.ho
 }

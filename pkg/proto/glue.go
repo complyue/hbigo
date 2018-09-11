@@ -3,7 +3,7 @@ package proto
 import (
 	"bytes"
 	"fmt"
-	. "github.com/complyue/hbigo/pkg/errors"
+	"github.com/complyue/hbigo/pkg/errors"
 	"reflect"
 )
 
@@ -13,7 +13,7 @@ Properly export contextual artifacts (fields, methods, types, etc.) for hosting.
 func PrepareHosting(ctx HoContext) {
 	// not to be a method of hoContext, or can't see the whole struct
 	if ctx == nil {
-		panic(NewUsageError("nil ctx?!"))
+		panic(errors.NewUsageError("nil ctx?!"))
 	}
 	if _, ok := ctx.(*hoContext); ok {
 		// shortcut if ctx is a direct hoContext, i.e. not embedding
@@ -55,7 +55,7 @@ func PrepareHosting(ctx HoContext) {
 		)
 	}
 	if hc == nil {
-		panic(NewUsageError(fmt.Sprintf("No embedded HoContext in struct %s ?!", ct.Name())))
+		panic(errors.NewUsageError(fmt.Sprintf("No embedded HoContext in struct %s ?!", ct.Name())))
 	}
 
 	// collected exported methods of the context struct

@@ -7,9 +7,10 @@ import (
 )
 
 var (
-	New   = errors.New
-	Wrap  = errors.Wrap
-	Wrapf = errors.Wrapf
+	New    = errors.New
+	Errorf = errors.Errorf
+	Wrap   = errors.Wrap
+	Wrapf  = errors.Wrapf
 )
 
 // github.com/pkg/errors can be formatted with rich information, including stacktrace, see:

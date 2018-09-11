@@ -2,7 +2,7 @@ package proto
 
 import (
 	"fmt"
-	. "github.com/complyue/hbigo/pkg/errors"
+	"github.com/complyue/hbigo/pkg/errors"
 	. "github.com/complyue/hbigo/pkg/util"
 	"github.com/golang/glog"
 	"net"
@@ -20,12 +20,24 @@ type Posting interface {
 	NetIdent() string
 	LocalAddr() net.Addr
 	RemoteAddr() net.Addr
-	// post notifications or publications to this peer
+
+	// post notifications (it subscribed to or other publications) to the peer
 	Notif(code string) (err error)
+	// post notifications with a binary data stream
 	NotifCoRun(code string, data <-chan []byte) (err error)
 
-	Co() (co CoConv)
-	CoId() string
+	Ho() Hosting
+
+	// send code to remote conversation
+	CoSendCode(code string) (err error)
+	// send data to remote conversation
+	CoSendData(<-chan []byte) (err error)
+
+	// initiate a local conversation
+	// a conversation will hog the underlying posting wire until closed,
+	// during which course other traffics, including notifications and other conversations will queue up.
+	// so the shorter conversations be, the higher overall system throughput will gain.
+	Co() (co Conver)
 
 	Close()
 }
@@ -46,10 +58,11 @@ type PostingEndpoint struct {
 	sendPacket            func(payload, wireDir string) (n int64, err error)
 	sendData              func(data <-chan []byte) (n int64, err error)
 	closer                func() error
-	ho                    *HostingEndpoint
+
+	ho *HostingEndpoint
 
 	muSend, muCo sync.Mutex
-	co           *coConv
+	co           *conver
 }
 
 func (po *PostingEndpoint) NetIdent() string {
@@ -98,30 +111,41 @@ func (po *PostingEndpoint) NotifCoRun(code string, data <-chan []byte) (err erro
 	return
 }
 
-func (po *PostingEndpoint) Co() CoConv {
+func (po *PostingEndpoint) Ho() Hosting {
+	return po.ho
+}
+
+func (po *PostingEndpoint) CoSendCode(code string) (err error) {
+	if po.ho.CoId() == "" {
+		panic(errors.NewUsageError("CoSend without hosting conversation ?!"))
+	}
+	_, err = po.sendPacket(code, "")
+	return
+}
+
+func (po *PostingEndpoint) CoSendData(data <-chan []byte) (err error) {
+	if po.ho.CoId() == "" {
+		panic(errors.NewUsageError("CoSend without hosting conversation ?!"))
+	}
+	_, err = po.sendData(data)
+	return
+}
+
+func (po *PostingEndpoint) Co() Conver {
 	po.muSend.Lock()
 	po.muCo.Lock()
 	if po.co != nil {
-		panic(NewUsageError("Unclean co on po ?!"))
+		panic(errors.NewUsageError("Unclean co on po ?!"))
 		// todo prevent deadlock ?
 	}
-	po.co = newCoConv(po)
+	po.co = newConver(po)
 	po.sendPacket(po.co.id, "co_begin")
 	return po.co
 }
 
-func (po *PostingEndpoint) CoId() string {
-	// todo need RLock for concurrent read ?
-	if po.co == nil {
-		return ""
-	} else {
-		return po.co.id
-	}
-}
-
-func (po *PostingEndpoint) coDone(co CoConv) {
+func (po *PostingEndpoint) coDone(co Conver) {
 	if co != po.co {
-		panic(NewUsageError("Unmatched coDone ?!"))
+		panic(errors.NewUsageError("Unmatched coDone ?!"))
 		// todo prevent deadlock ?
 	}
 	po.sendPacket(po.co.id, "co_end")
@@ -146,10 +170,10 @@ func (po *PostingEndpoint) Cancel(err error) {
 	// cut the wire at last anyway
 	defer func() {
 		if e := recover(); e != nil {
-			glog.Warningf("Error before closing posting wire: %+v\n", RichError(e))
+			glog.Warningf("Error before closing posting wire: %+v\n", errors.RichError(e))
 		}
 		if e := closer(); e != nil {
-			glog.Warningf("Error when closing posting wire: %+v\n", RichError(e))
+			glog.Warningf("Error when closing posting wire: %+v\n", errors.RichError(e))
 		}
 	}()
 
@@ -162,7 +186,7 @@ func (po *PostingEndpoint) Cancel(err error) {
 		po.muSend.Lock()
 		defer po.muSend.Unlock()
 		// try send full error info to peer before closer
-		po.sendPacket(fmt.Sprintf("%+v", RichError(err)), "err")
+		po.sendPacket(fmt.Sprintf("%+v", errors.RichError(err)), "err")
 	}
 }
 

@@ -1,7 +1,7 @@
 package proto
 
 import (
-	. "github.com/complyue/hbigo/pkg/errors"
+	"github.com/complyue/hbigo/pkg/errors"
 	. "github.com/complyue/hbigo/pkg/util"
 	"github.com/cosmos72/gomacro/fast"
 	"reflect"
@@ -9,6 +9,17 @@ import (
 
 /*
 The context for a service hosting endpoint.
+
+An HBI gate struct will at least embed an interface of this type constructed by hbi.NewHoContext(),
+with service methods (and optionally some fields for service gate contextual states) defined
+to the struct in addition.
+
+These methods (and setter/getter of fields) will be available (i.e. exposed) to HBI connection peers
+for scripted conversations & notifications.
+
+Methods (include getters/setters) of this interface can be intercepted (overridden in Go's ways) by
+the HBI gate struct purposefully.
+
 */
 type HoContext interface {
 	// be a cancellable context
@@ -20,6 +31,10 @@ type HoContext interface {
 	// allow manipulation of contextual state objects
 	Put(key string, value interface{})
 	Get(key string) interface{}
+
+	// the hosting endpoint embedding this HoContext
+	Ho() Hosting
+	SetHo(ho Hosting)
 
 	// the stub if not nil, can be used to post packets/streams to peer
 	PoToPeer() Posting
@@ -40,9 +55,22 @@ type hoContext struct {
 	// embed a cancellable context
 	CancellableContext
 
+	ho Hosting
 	po Posting
 
 	interp *fast.Interp // never change no need to sync
+}
+
+func (ctx *hoContext) Ho() Hosting {
+	ctx.RLock()
+	defer ctx.RUnlock()
+	return ctx.ho
+}
+
+func (ctx *hoContext) SetHo(ho Hosting) {
+	ctx.Lock()
+	defer ctx.Unlock()
+	ctx.ho = ho
 }
 
 func (ctx *hoContext) PoToPeer() Posting {
@@ -81,7 +109,7 @@ func (ctx *hoContext) Exec(code string) (result interface{}, ok bool, err error)
 		// gomacro Eval may panic, convert it to returned error here
 		if e := recover(); e != nil {
 			ok = false
-			err = RichError(e)
+			err = errors.RichError(e)
 		}
 	}()
 

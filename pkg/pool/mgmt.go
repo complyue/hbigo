@@ -7,14 +7,21 @@ import (
 	"github.com/golang/glog"
 	"net"
 	"os"
+	"runtime"
 )
 
-type ServiceConsumer struct {
+func newServiceConsumer(ho hbi.Hosting, session string, sticky bool) *serviceConsumer {
+	return &serviceConsumer{
+		ho: ho, session: session, sticky: sticky,
+	}
+}
+
+type serviceConsumer struct {
 	ho      hbi.Hosting
 	session string
 	sticky  bool
 
-	assignedWorker *ProcWorker
+	assignedWorker *procWorker
 }
 
 func NewMaster(
@@ -29,11 +36,11 @@ func NewMaster(
 		poolSize:         poolSize,
 		hotBack:          hotBack,
 		ackTimeout:       10,
-		allWorkers:       make(map[*ProcWorker]struct{}),
-		pendingWorkers:   make(map[*ProcWorker]struct{}),
-		idleWorkers:      make(chan *ProcWorker, poolSize),
-		workersByPid:     make(map[int]*ProcWorker),
-		workersBySession: make(map[string]*ProcWorker),
+		allWorkers:       make(map[*procWorker]struct{}),
+		pendingWorkers:   make(map[*procWorker]struct{}),
+		idleWorkers:      make(chan *procWorker, poolSize),
+		workersByPid:     make(map[int]*procWorker),
+		workersBySession: make(map[string]*procWorker),
 	}
 
 	return master, err
@@ -44,14 +51,34 @@ type Master struct {
 	hotBack          int
 	ackTimeout       float64
 	teamAddr         *net.TCPAddr
-	allWorkers       map[*ProcWorker]struct{}
-	pendingWorkers   map[*ProcWorker]struct{}
-	idleWorkers      chan *ProcWorker
-	workersByPid     map[int]*ProcWorker
-	workersBySession map[string]*ProcWorker
+	allWorkers       map[*procWorker]struct{}
+	pendingWorkers   map[*procWorker]struct{}
+	idleWorkers      chan *procWorker
+	workersByPid     map[int]*procWorker
+	workersBySession map[string]*procWorker
 }
 
-func (pool *Master) assignProc(consumer *ServiceConsumer) (procPort int) {
+func (pool *Master) assignProc(consumer *serviceConsumer) (procPort int) {
+	var worker *procWorker
+	// prepare worker proc anyway before actual return
+	defer func() {
+		if worker == nil {
+			panic(errors.New("No proc assigned ?!"))
+		}
+		if consumer.session != "" && worker.lastSession != consumer.session {
+			if worker.lastSession != "" {
+				delete(pool.workersBySession, worker.lastSession)
+				glog.Warningf(
+					"Consumer %s caused session switch [%s]=>[%s]\n",
+					consumer.ho.NetIdent(), worker.lastSession, consumer.session,
+				)
+			}
+			worker.prepareSession(consumer.session)
+			pool.workersBySession[worker.lastSession] = worker
+		}
+		procPort = worker.ProcPort // set return value
+	}()
+
 	poolQuota := pool.poolSize - len(pool.allWorkers)
 	idleQuota := pool.hotBack - len(pool.pendingWorkers) - len(pool.idleWorkers)
 	if idleQuota > poolQuota {
@@ -69,15 +96,19 @@ func (pool *Master) assignProc(consumer *ServiceConsumer) (procPort int) {
 		}
 	}
 
-	worker := consumer.assignedWorker
+	worker = consumer.assignedWorker
 	if worker != nil && worker.checkAlive() {
-
+		// this consumer has had a worker assigned, and still alive, reused it
+		return
 	}
 
 	return
 }
 
 func (pool *Master) Serve(serviceAddr string) {
+
+	// run pool master with parallelism of 1
+	runtime.GOMAXPROCS(1)
 
 	// start a goro to face proc workers
 	go func() {
@@ -101,18 +132,25 @@ func (pool *Master) Serve(serviceAddr string) {
 
 }
 
-func newProcWorker(pool *Master) *ProcWorker {
-	worker := &ProcWorker{}
+func newProcWorker(pool *Master) *procWorker {
+	worker := &procWorker{}
 	return worker
 }
 
-type ProcWorker struct {
+type procWorker struct {
 	proc *os.Process
 
 	ProcPort int
+
+	lastSession string
 }
 
-func (w *ProcWorker) checkAlive() bool {
+func (w *procWorker) checkAlive() bool {
 
 	return true
+}
+
+func (w *procWorker) prepareSession(session string) {
+
+	w.lastSession = session
 }

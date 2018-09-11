@@ -3,6 +3,7 @@ package pool
 import (
 	"fmt"
 	"github.com/complyue/hbigo"
+	"github.com/complyue/hbigo/pkg/errors"
 	"net"
 )
 
@@ -18,22 +19,33 @@ type master4consumer struct {
 	hbi.HoContext
 
 	pool     *Master
-	consumer *ServiceConsumer
+	consumer *serviceConsumer
 }
 
 func (m4c *master4consumer) AssignProc(session string, sticky bool) {
-	procPort := m4c.pool.assignProc(m4c.consumer)
+	consumer := m4c.consumer
+	if consumer == nil {
+		// first assignment request, create consumer object
+		consumer = newServiceConsumer(m4c.Ho(), session, sticky)
+		m4c.consumer = consumer
+	} else {
+		if consumer.sticky && session != consumer.session {
+			panic(errors.Errorf("Changing sticky session [%s]=>[%s] ?!", consumer.session, session))
+		}
+		consumer.session = session
+		consumer.sticky = sticky
+	}
+	procPort := m4c.pool.assignProc(consumer)
 	p2p := m4c.PoToPeer()
-	co := p2p.Co()
-	defer co.Close()
-	co.CoSendCode(fmt.Sprintf(
+	// a conversation should have been initiated by service consumer endpoint
+	p2p.CoSendCode(fmt.Sprintf(
 		// use the IP via which this consumer has connected to this pool
-		"%s:%d", p2p.LocalAddr().(*net.IPAddr).String(), procPort,
+		`"%s:%d"`, p2p.LocalAddr().(*net.IPAddr).String(), procPort,
 	))
 }
 
 func (m4c *master4consumer) ReleaseProc() {
-
+	panic(errors.New("Not impl."))
 }
 
 func newMaster4Worker() hbi.HoContext {
