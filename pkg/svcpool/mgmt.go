@@ -183,7 +183,10 @@ func (pool *Master) registerWorker(pid int, procPort int, ho hbi.Hosting) (w *pr
 		w.restartProcess(ho.Err())
 	}()
 
-	glog.V(1).Infof("Registered service proc worker process [pid=%d,port=%d].", w.proc.Pid, procPort)
+	glog.V(1).Infof(
+		"Service proc worker process [pid=%d,port=%d] registered [team=%s]",
+		w.proc.Pid, procPort, w.pool.teamAddr.String(),
+	)
 	return
 }
 
@@ -226,13 +229,21 @@ func (w *procWorker) startProcess() (err error) {
 	if err != nil {
 		return
 	}
-	cmd := exec.Command(exePath, "-team", w.pool.teamAddr.String())
+	cmd := exec.Command(exePath, append([]string{
+		fmt.Sprintf("-team=%s", w.pool.teamAddr.String())}, os.Args[1:]...,
+	)...)
+	cmd.Stdin = nil
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = os.Stdout
 	err = cmd.Start()
 	if err != nil {
 		return
 	}
 	w.proc = cmd.Process
-	glog.V(1).Infof("Started service proc worker process [pid=%d].", w.proc.Pid)
+	glog.V(1).Infof(
+		"Started service proc worker process [pid=%d,team=%s].",
+		w.proc.Pid, w.pool.teamAddr.String(),
+	)
 	w.pool.pendingWorkers[w] = time.Now()
 	w.pool.workersByPid[w.proc.Pid] = w
 	return
