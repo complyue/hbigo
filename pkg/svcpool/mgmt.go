@@ -48,7 +48,7 @@ func (m4c *master4consumer) AssignProc(session string, sticky bool) {
 	// a conversation should have been initiated by service consumer endpoint
 	p2p.CoSendCode(fmt.Sprintf(
 		// use the IP via which this consumer has connected to this pool
-		`"%s:%d"`, p2p.LocalAddr().(*net.IPAddr).String(), procPort,
+		`"%s:%d"`, p2p.LocalAddr().(*net.TCPAddr).String(), procPort,
 	))
 }
 
@@ -64,6 +64,12 @@ func (pool *Master) assignProc(consumer *master4consumer) (procPort int) {
 	var worker *procWorker
 	// prepare worker proc anyway before actual return
 	defer func() {
+		if e := recover(); e != nil {
+			err = errors.RichError(e)
+		}
+		if err != nil {
+			glog.Error(err)
+		}
 		if worker == nil {
 			panic(errors.New("No proc assigned ?!"))
 		}
@@ -122,7 +128,7 @@ func (pool *Master) assignProc(consumer *master4consumer) (procPort int) {
 	// search for idle workers for this assignment
 	searchedWorkers := make(map[*procWorker]struct{})
 	for {
-		worker := <-pool.idleWorkers
+		worker = <-pool.idleWorkers
 		if !worker.checkAlive() {
 			continue
 		}
