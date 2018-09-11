@@ -5,6 +5,7 @@ import (
 	. "github.com/complyue/hbigo/pkg/errors"
 	. "github.com/complyue/hbigo/pkg/util"
 	"github.com/golang/glog"
+	"net"
 	"sync"
 )
 
@@ -17,6 +18,8 @@ type Posting interface {
 
 	// identity from the network's view
 	NetIdent() string
+	LocalAddr() net.Addr
+	RemoteAddr() net.Addr
 	// post notifications or publications to this peer
 	Notif(code string) (err error)
 	NotifCoRun(code string, data <-chan []byte) (err error)
@@ -38,11 +41,12 @@ type PostingEndpoint struct {
 	CancellableContext
 
 	// Should be set by implementer
-	netIdent   string
-	sendPacket func(payload, wireDir string) (n int64, err error)
-	sendData   func(data <-chan []byte) (n int64, err error)
-	closer     func() error
-	ho         *HostingEndpoint
+	netIdent              string
+	localAddr, remoteAddr net.Addr
+	sendPacket            func(payload, wireDir string) (n int64, err error)
+	sendData              func(data <-chan []byte) (n int64, err error)
+	closer                func() error
+	ho                    *HostingEndpoint
 
 	muSend, muCo sync.Mutex
 	co           *coConv
@@ -52,14 +56,24 @@ func (po *PostingEndpoint) NetIdent() string {
 	return po.netIdent
 }
 
+func (po *PostingEndpoint) LocalAddr() net.Addr {
+	return po.localAddr
+}
+
+func (po *PostingEndpoint) RemoteAddr() net.Addr {
+	return po.remoteAddr
+}
+
 func (po *PostingEndpoint) PlugWire(
-	netIdent string,
+	netIdent string, localAddr, remoteAddr net.Addr,
 	sendPacket func(payload, wireDir string) (n int64, err error),
 	sendData func(data <-chan []byte) (n int64, err error),
 	closer func() error,
 	ho *HostingEndpoint,
 ) {
 	po.netIdent = netIdent
+	po.localAddr = localAddr
+	po.remoteAddr = remoteAddr
 	po.sendPacket = sendPacket
 	po.sendData = sendData
 	po.closer = closer

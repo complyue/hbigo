@@ -66,7 +66,10 @@ func ServeTCP(ctxFact func() HoContext, addr string, cb func(*net.TCPListener)) 
 			CancellableContext: po,
 			conn:               conn,
 		}
-		po.PlugWire(netIdent, poWire.sendPacket, poWire.sendData, conn.CloseWrite, ho)
+		po.PlugWire(
+			netIdent, conn.LocalAddr(), conn.RemoteAddr(),
+			poWire.sendPacket, poWire.sendData, conn.CloseWrite, ho,
+		)
 
 		ho.SetPoToPeer(po)
 
@@ -103,7 +106,10 @@ func DialTCP(ctx HoContext, addr string) (hbic *TCPConn, err error) {
 		CancellableContext: po,
 		conn:               conn,
 	}
-	po.PlugWire(netIdent, poWire.sendPacket, poWire.sendData, conn.CloseWrite, ho)
+	po.PlugWire(
+		netIdent, conn.LocalAddr(), conn.RemoteAddr(),
+		poWire.sendPacket, poWire.sendData, conn.CloseWrite, ho,
+	)
 
 	ho.SetPoToPeer(po)
 
@@ -178,7 +184,14 @@ func (wire *TCPWire) recvPacket() (packet *Packet, err error) {
 					return
 				}
 				chunkLen := newLen - i - 1
-				payloadBuf = make([]byte, chunkLen, payloadLen)
+				func() { // mysterious cap range problem, reproducible ?
+					defer func() {
+						if e := recover(); e != nil {
+							panic(Wrapf(RichError(e), "%v/%v", chunkLen, payloadLen))
+						}
+					}()
+					payloadBuf = make([]byte, chunkLen, payloadLen)
+				}()
 				if chunkLen > 0 {
 					copy(payloadBuf[:chunkLen], hdrBuf[i+1:newLen])
 				}
