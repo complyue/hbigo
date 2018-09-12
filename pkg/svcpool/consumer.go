@@ -61,7 +61,10 @@ func (consumer *Consumer) GetService(session string, sticky bool) (service *hbi.
 }
 
 func (consumer *Consumer) AssignProc(session string, sticky bool) (procAddr string, err error) {
-	co := consumer.Pool.PoToPeer().Co()
+	co, err := consumer.Pool.PoToPeer().Co()
+	if err != nil {
+		return
+	}
 	defer co.Close()
 	var addrStr interface{}
 	addrStr, err = co.Get(fmt.Sprintf(`
@@ -75,7 +78,10 @@ AssignProc(%#v,%#v)
 }
 
 func (consumer *Consumer) ReleaseProc(procAddr string) (err error) {
-	co := consumer.Pool.PoToPeer().Co()
+	co, err := consumer.Pool.PoToPeer().Co()
+	if err != nil {
+		return
+	}
 	defer co.Close()
 	_, err = co.Get(fmt.Sprintf(`
 ReleaseProc(%#v)

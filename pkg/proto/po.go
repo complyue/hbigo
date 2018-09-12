@@ -37,7 +37,7 @@ type Posting interface {
 	// a conversation will hog the underlying posting wire until closed,
 	// during which course other traffics, including notifications and other conversations will queue up.
 	// so the shorter conversations be, the higher overall system throughput will gain.
-	Co() (co Conver)
+	Co() (co Conver, err error)
 
 	Close()
 }
@@ -131,16 +131,27 @@ func (po *PostingEndpoint) CoSendData(data <-chan []byte) (err error) {
 	return
 }
 
-func (po *PostingEndpoint) Co() Conver {
+func (po *PostingEndpoint) Co() (co Conver, err error) {
 	po.muSend.Lock()
 	po.muCo.Lock()
+	defer func() {
+		if e := recover(); e != nil {
+			err = errors.RichError(e)
+		}
+		if err != nil {
+			co = nil
+			po.muCo.Unlock()
+			po.muSend.Unlock()
+			po.Cancel(err)
+		}
+	}()
 	if po.co != nil {
 		panic(errors.NewUsageError("Unclean co on po ?!"))
 		// todo prevent deadlock ?
 	}
 	po.co = newConver(po)
-	po.sendPacket(po.co.id, "co_begin")
-	return po.co
+	_, err = po.sendPacket(po.co.id, "co_begin")
+	return
 }
 
 func (po *PostingEndpoint) coDone(co Conver) {
