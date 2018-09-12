@@ -24,6 +24,7 @@ type (
 
 	Hosting = proto.Hosting
 	Posting = proto.Posting
+	Conver  = proto.Conver
 )
 
 var (

@@ -81,7 +81,10 @@ func (pool *Master) assignProc(consumer *master4consumer) (procPort int) {
 					consumer.Ho().NetIdent(), worker.lastSession, consumer.session,
 				)
 			}
-			worker.prepareSession(consumer.session)
+			err = worker.prepareSession(consumer.session)
+			if err != nil {
+				panic(errors.Wrap(err, "Failed session preparation!"))
+			}
 			pool.workersBySession[worker.lastSession] = worker
 		}
 		consumer.assignedWorker = worker
@@ -314,24 +317,38 @@ func (w *procWorker) checkAlive() (alive bool) {
 	return
 }
 
-func (w *procWorker) prepareSession(session string) {
+func (w *procWorker) prepareSession(session string) (err error) {
+	defer func() {
+		if e := recover(); e != nil {
+			err = errors.RichError(e)
+		}
+		if err != nil {
+			w.restartProcess(err)
+		}
+	}()
 	p2p := w.ho.PoToPeer()
-	co := p2p.Co()
+	var co hbi.Conver
+	co, err = p2p.Co()
+	if err != nil {
+		return
+	}
 	defer co.Close()
-	workerSession, err := co.Get(fmt.Sprintf(`
+	var workerSession interface{}
+	workerSession, err = co.Get(fmt.Sprintf(`
 PrepareSession(%#v)
 `, session))
 	if err != nil {
-		defer w.restartProcess(errors.RichError(err))
 		return
 	}
 	if workerSession != session {
-		defer w.restartProcess(errors.Errorf(
+		err = errors.Errorf(
 			"Unexpected session preparation result [%s] vs [%s]",
 			workerSession, session,
-		))
+		)
+		return
 	}
 	w.lastSession = workerSession.(string)
+	return
 }
 
 func (w *procWorker) retired() {
