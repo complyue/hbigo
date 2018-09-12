@@ -10,6 +10,7 @@ import (
 
 type Hosting interface {
 	HoContext
+	HoCtx() HoContext
 
 	// identity from the network's view
 	NetIdent() string
@@ -52,6 +53,10 @@ type HostingEndpoint struct {
 
 	// used to pump landed objects from landing loop goro to application goro
 	chObj chan interface{}
+}
+
+func (ho *HostingEndpoint) HoCtx() HoContext {
+	return ho.HoContext
 }
 
 func (ho *HostingEndpoint) CoId() string {

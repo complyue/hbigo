@@ -58,6 +58,9 @@ func PrepareHosting(ctx HoContext) {
 		panic(errors.NewUsageError(fmt.Sprintf("No embedded HoContext in struct %s ?!", ct.Name())))
 	}
 
+	// add some overridable utility funcs
+	exports["NewError"] = errors.New
+
 	// collected exported methods of the context struct
 	for mi, nm := 0, pv.NumMethod(); mi < nm; mi++ {
 		mt := pt.Method(mi)
@@ -68,7 +71,7 @@ func PrepareHosting(ctx HoContext) {
 		exports[mt.Name] = mv
 	}
 
-	// prepare black list for names to be filtererer when planting artifacts into interpreter,
+	// prepare black list for names to be filtered when planting artifacts into interpreter,
 	// i.e. all fields/methods promoted from embedded HoContext should be excluded
 	if expBlackList == nil {
 		expBlackList = make(map[string]struct{}, len(exports))
@@ -89,6 +92,7 @@ func PrepareHosting(ctx HoContext) {
 			expBlackList[mt.Name] = struct{}{}
 		}
 		// white list some useful methods
+		delete(expBlackList, "Ho")
 		delete(expBlackList, "PoToPeer")
 	}
 
@@ -107,7 +111,7 @@ func PrepareHosting(ctx HoContext) {
 	}
 	hc.put("API", apiText.String())
 
-	// plant some utility funcs
+	// plant some non-overridable utility funcs
 	hc.put("pong", func() {}) // nop react to ping back
 	hc.put("ping", func() {   // react to connectivity test, pong back
 		if po := hc.po; po != nil {
