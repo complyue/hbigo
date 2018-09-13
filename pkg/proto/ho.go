@@ -289,7 +289,6 @@ func (ho *HostingEndpoint) landingLoop() {
 				switch p2p := ho.PoToPeer(); po := p2p.(type) {
 				case *PostingEndpoint:
 					po.muSend.Lock()
-					po.muCo.Lock()
 					ho.setCoId(pkt.Payload)
 					if _, err := po.sendPacket(pkt.Payload, "co_ack"); err != nil {
 						panic(err)
@@ -311,7 +310,6 @@ func (ho *HostingEndpoint) landingLoop() {
 					if _, err := po.sendPacket("", "co_ack"); err != nil {
 						panic(err)
 					}
-					po.muCo.Unlock()
 					po.muSend.Unlock()
 				case nil:
 					ho.setCoId("")

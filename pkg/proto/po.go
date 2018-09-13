@@ -61,8 +61,8 @@ type PostingEndpoint struct {
 
 	ho *HostingEndpoint
 
-	muSend, muCo sync.Mutex
-	co           *conver
+	muSend sync.Mutex
+	co     *conver
 }
 
 func (po *PostingEndpoint) NetIdent() string {
@@ -133,7 +133,6 @@ func (po *PostingEndpoint) CoSendData(data <-chan []byte) (err error) {
 
 func (po *PostingEndpoint) Co() (co Conver, err error) {
 	po.muSend.Lock()
-	po.muCo.Lock()
 	defer func() {
 		if e := recover(); e != nil {
 			err = errors.RichError(e)
@@ -143,7 +142,6 @@ func (po *PostingEndpoint) Co() (co Conver, err error) {
 				po.co = nil
 			}
 			co = nil
-			po.muCo.Unlock()
 			po.muSend.Unlock()
 			po.Cancel(err)
 		}
@@ -168,7 +166,6 @@ func (po *PostingEndpoint) coDone(co Conver) {
 	}
 	po.sendPacket(po.co.id, "co_end")
 	po.co = nil
-	po.muCo.Unlock()
 	po.muSend.Unlock()
 }
 
