@@ -7,7 +7,6 @@ import (
 	"github.com/complyue/hbigo/pkg/util"
 	"github.com/golang/glog"
 	"io"
-	"log"
 	"net"
 	"strings"
 )
@@ -39,7 +38,7 @@ func ServeTCP(ctxFact func() HoContext, addr string, cb func(*net.TCPListener)) 
 	var raddr *net.TCPAddr
 	raddr, err = net.ResolveTCPAddr("tcp", addr)
 	if nil != err {
-		log.Fatal("addr error", err)
+		glog.Error("addr error", err)
 		return
 	}
 	var listener *net.TCPListener
@@ -52,7 +51,7 @@ func ServeTCP(ctxFact func() HoContext, addr string, cb func(*net.TCPListener)) 
 		var conn *net.TCPConn
 		conn, err = listener.AcceptTCP()
 		if nil != err {
-			log.Fatal("accept error", err)
+			glog.Error("accept error", err)
 			return
 		}
 		netIdent := fmt.Sprintf("%s<->%s", conn.LocalAddr(), conn.RemoteAddr())
@@ -96,12 +95,12 @@ The returned `*hbi.TCPConn` embeds an `hbi.Hosting` interface and an `hbi.Postin
 func DialTCP(ctx HoContext, addr string) (hbic *TCPConn, err error) {
 	raddr, err := net.ResolveTCPAddr("tcp", addr)
 	if nil != err {
-		log.Fatal("addr error", err)
+		glog.Error("addr error", err)
 		return
 	}
 	conn, err := net.DialTCP("tcp", nil, raddr)
 	if nil != err {
-		log.Fatal("conn error", err)
+		glog.Error("conn error", err)
 		return
 	}
 	netIdent := fmt.Sprintf("%s<->%s", conn.LocalAddr(), conn.RemoteAddr())
@@ -147,6 +146,14 @@ type tcpWire struct {
 }
 
 func (wire tcpWire) sendPacket(payload, wireDir string) (n int64, err error) {
+	if glog.V(3) {
+		defer func() {
+			if err != nil {
+				glog.Infof("HBI sent pkt %d:\n%s\n", n,
+					Packet{wireDir, payload}.String())
+			}
+		}()
+	}
 	header := fmt.Sprintf("[%v#%s]", len(payload), wireDir)
 	bufs := net.Buffers{
 		[]byte(header), []byte(payload),
@@ -189,6 +196,13 @@ func (wire tcpWire) sendData(data <-chan []byte) (n int64, err error) {
 }
 
 func (wire tcpWire) recvPacket() (packet *Packet, err error) {
+	if glog.V(3) {
+		defer func() {
+			if packet != nil {
+				glog.Infof("HBI got pkt:\n%s\n", packet.String())
+			}
+		}()
+	}
 	const MaxHeaderLen = 60
 	var (
 		wireDir, payload string

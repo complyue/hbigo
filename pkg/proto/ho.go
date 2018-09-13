@@ -257,7 +257,9 @@ func (ho *HostingEndpoint) landingLoop() {
 					if result, ok, err := ho.Exec(pkt.Payload); err != nil {
 						panic(errors.NewPacketError("exec failure", pkt))
 					} else if ok {
-						po.sendPacket(fmt.Sprintf("%#v", result), "")
+						if _, err := po.sendPacket(fmt.Sprintf("%#v", result), ""); err != nil {
+							panic(err)
+						}
 					} else {
 						panic(errors.NewPacketError("coget code exec to void ?!", pkt))
 					}
@@ -277,7 +279,9 @@ func (ho *HostingEndpoint) landingLoop() {
 					po.muSend.Lock()
 					po.muCo.Lock()
 					ho.setCoId(pkt.Payload)
-					po.sendPacket(pkt.Payload, "co_ack")
+					if _, err := po.sendPacket(pkt.Payload, "co_ack"); err != nil {
+						panic(err)
+					}
 				case nil:
 					ho.setCoId(pkt.Payload)
 				default:
@@ -292,7 +296,9 @@ func (ho *HostingEndpoint) landingLoop() {
 				switch p2p := ho.PoToPeer(); po := p2p.(type) {
 				case *PostingEndpoint:
 					ho.setCoId("")
-					po.sendPacket("", "co_ack")
+					if _, err := po.sendPacket("", "co_ack"); err != nil {
+						panic(err)
+					}
 					po.muCo.Unlock()
 					po.muSend.Unlock()
 				case nil:

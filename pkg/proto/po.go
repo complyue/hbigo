@@ -139,6 +139,9 @@ func (po *PostingEndpoint) Co() (co Conver, err error) {
 			err = errors.RichError(e)
 		}
 		if err != nil {
+			if po.co == co {
+				po.co = nil
+			}
 			co = nil
 			po.muCo.Unlock()
 			po.muSend.Unlock()
@@ -151,6 +154,10 @@ func (po *PostingEndpoint) Co() (co Conver, err error) {
 	}
 	po.co = newConver(po)
 	_, err = po.sendPacket(po.co.id, "co_begin")
+	if err != nil {
+		return
+	}
+	co = po.co
 	return
 }
 

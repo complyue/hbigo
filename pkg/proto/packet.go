@@ -7,6 +7,6 @@ type Packet struct {
 	Payload string
 }
 
-func (pkt *Packet) String() string {
+func (pkt Packet) String() string {
 	return fmt.Sprintf("[%d#%s]%s", len(pkt.Payload), pkt.WireDir, pkt.Payload)
 }

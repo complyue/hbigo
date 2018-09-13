@@ -18,7 +18,7 @@ func NewConsumer(
 		SvcConns: make(map[string]map[string]*hbi.TCPConn),
 	}
 	err = consumer.connectMaster()
-	if err == nil {
+	if err != nil {
 		consumer = nil
 		return
 	}
