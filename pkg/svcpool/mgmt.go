@@ -48,7 +48,7 @@ func (m4c *master4consumer) AssignProc(session string, sticky bool) {
 	// a conversation should have been initiated by service consumer endpoint
 	p2p.CoSendCode(fmt.Sprintf(
 		// use the IP via which this consumer has connected to this pool
-		`"%s:%d"`, p2p.LocalAddr().(*net.TCPAddr).String(), procPort,
+		`"%s:%d"`, p2p.LocalAddr().(*net.TCPAddr).IP.String(), procPort,
 	))
 }
 
@@ -99,7 +99,7 @@ func (pool *Master) assignProc(consumer *master4consumer) (procPort int) {
 	if idleQuota > 0 {
 		glog.V(1).Infof(
 			"Starting %d hot backing proc workers given current numbers: (%d+%d)/%d",
-			len(pool.idleWorkers), len(pool.pendingWorkers), pool.poolSize,
+			idleQuota, len(pool.idleWorkers), len(pool.pendingWorkers), pool.poolSize,
 		)
 		for ; idleQuota > 0; idleQuota-- {
 			_, err = newProcWorker(pool)

@@ -46,7 +46,8 @@ type Conver interface {
 
 func newConver(po *PostingEndpoint) *conver {
 	co := &conver{
-		po: po,
+		CancellableContext: NewCancellableContext(),
+		po:                 po,
 	}
 	co.id = fmt.Sprintf("%p", co)
 	return co

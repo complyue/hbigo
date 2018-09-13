@@ -15,44 +15,42 @@ func PrepareHosting(ctx HoContext) {
 	if ctx == nil {
 		panic(errors.NewUsageError("nil ctx?!"))
 	}
-	if _, ok := ctx.(*hoContext); ok {
-		// shortcut if ctx is a direct hoContext, i.e. not embedding
-		return
-	}
 	var (
-		// must be a pointer type
-		pv      = reflect.ValueOf(ctx)
-		pt      = pv.Type()
-		cv      = pv.Elem()
-		ct      = cv.Type()
-		hc      *hoContext
-		exports = make(map[string]interface{})
+		hc              *hoContext
+		noCustomization bool
+		pv              = reflect.ValueOf(ctx)
+		pt              = pv.Type()
+		cv              = pv.Elem()
+		ct              = cv.Type()
+		exports         = make(map[string]interface{})
 	)
-	// collect exported fields of the context struct, and extract embedded hoContext btw
-	for fi, nf := 0, ct.NumField(); fi < nf; fi++ {
-		sf := ct.Field(fi)
-		fv := cv.Field(fi)
-		if sf.PkgPath != "" {
-			continue // ignore unexported field
-		}
-		if sf.Anonymous {
-			if "HoContext" == sf.Name {
-				// there should be one and only one embedded anonymous HoContext
-				hc = fv.Interface().(*hoContext)
+	if hc, noCustomization = ctx.(*hoContext); !noCustomization {
+		// collect exported fields of the context struct, and extract embedded hoContext btw
+		for fi, nf := 0, ct.NumField(); fi < nf; fi++ {
+			sf := ct.Field(fi)
+			fv := cv.Field(fi)
+			if sf.PkgPath != "" {
+				continue // ignore unexported field
 			}
-			continue
+			if sf.Anonymous {
+				if "HoContext" == sf.Name {
+					// there should be one and only one embedded anonymous HoContext
+					hc = fv.Interface().(*hoContext)
+				}
+				continue
+			}
+			// expose field getter/setter func
+			exports[sf.Name] = func() interface{} {
+				return fv.Interface()
+			}
+			exports["Set"+sf.Name] = reflect.MakeFunc(
+				reflect.FuncOf([]reflect.Type{sf.Type}, []reflect.Type{}, false),
+				func(args []reflect.Value) (results []reflect.Value) {
+					fv.Set(args[0])
+					return
+				},
+			)
 		}
-		// expose field getter/setter func
-		exports[sf.Name] = func() interface{} {
-			return fv.Interface()
-		}
-		exports["Set"+sf.Name] = reflect.MakeFunc(
-			reflect.FuncOf([]reflect.Type{sf.Type}, []reflect.Type{}, false),
-			func(args []reflect.Value) (results []reflect.Value) {
-				fv.Set(args[0])
-				return
-			},
-		)
 	}
 	if hc == nil {
 		panic(errors.NewUsageError(fmt.Sprintf("No embedded HoContext in struct %s ?!", ct.Name())))
@@ -61,18 +59,21 @@ func PrepareHosting(ctx HoContext) {
 	// add some overridable utility funcs
 	exports["NewError"] = errors.New
 
-	// collected exported methods of the context struct
-	for mi, nm := 0, pv.NumMethod(); mi < nm; mi++ {
-		mt := pt.Method(mi)
-		if mt.PkgPath != "" {
-			continue // ignore unexported method
+	if !noCustomization {
+		// collected exported methods of the context struct
+		for mi, nm := 0, pv.NumMethod(); mi < nm; mi++ {
+			mt := pt.Method(mi)
+			if mt.PkgPath != "" {
+				continue // ignore unexported method
+			}
+			mv := pv.Method(mi)
+			exports[mt.Name] = mv
 		}
-		mv := pv.Method(mi)
-		exports[mt.Name] = mv
 	}
 
 	// prepare black list for names to be filtered when planting artifacts into interpreter,
-	// i.e. all fields/methods promoted from embedded HoContext should be excluded
+	// i.e. all fields/methods promoted from embedded HoContext should be excluded, except the
+	// explicitly exposed utility methods
 	if expBlackList == nil {
 		expBlackList = make(map[string]struct{}, len(exports))
 		pt := reflect.ValueOf(hc).Type()
@@ -91,9 +92,6 @@ func PrepareHosting(ctx HoContext) {
 			}
 			expBlackList[mt.Name] = struct{}{}
 		}
-		// white list some useful methods
-		delete(expBlackList, "Ho")
-		delete(expBlackList, "PoToPeer")
 	}
 
 	// plant collected exports into interpreter
@@ -118,6 +116,9 @@ func PrepareHosting(ctx HoContext) {
 			po.Notif("pong()")
 		}
 	})
+	// expose methods to access the hosting object
+	hc.put("Ho", hc.Ho)
+	hc.put("PoToPeer", hc.PoToPeer)
 }
 
 var expBlackList map[string]struct{}

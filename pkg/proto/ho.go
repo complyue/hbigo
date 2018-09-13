@@ -170,6 +170,9 @@ func (ho *HostingEndpoint) landingLoop() {
 			}
 
 			// blocking read next packet
+			if glog.V(3) {
+				glog.Infof("HBI wire %+v receiving next packet ...", ho.netIdent)
+			}
 			pkt, err := ho.recvPacket()
 			if err != nil {
 				if err == io.EOF {
@@ -183,7 +186,13 @@ func (ho *HostingEndpoint) landingLoop() {
 			}
 			if pkt != nil {
 				// blocking put packet for landing
+				if glog.V(3) {
+					glog.Infof("HBI wire %+v pushing packet: ...\n%s\n", ho.netIdent, pkt)
+				}
 				chPkt <- *pkt
+				if glog.V(3) {
+					glog.Infof("HBI wire %+v pushed packet:\n%s\n", ho.netIdent, pkt)
+				}
 				pkt = nil // eager release mem
 			} else {
 				// mostly the tcp connection has been disconnected,
@@ -204,6 +213,9 @@ func (ho *HostingEndpoint) landingLoop() {
 			// as landing of the packet may start binary data streaming,
 			// in which case we should let recvData() lock muRecv before this
 			// loop does
+			if glog.V(3) {
+				glog.Infof("HBI wire %+v pending recv next packet ...", ho.netIdent)
+			}
 			<-chProc
 		}
 	}()
@@ -307,24 +319,13 @@ func (ho *HostingEndpoint) landingLoop() {
 					panic(errors.NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
 				}
 			case "co_ack":
-				switch p2p := ho.PoToPeer(); po := p2p.(type) {
+				switch p2p := ho.PoToPeer(); p2p.(type) {
 				case *PostingEndpoint:
 					if pkt.Payload != "" {
 						// ack to co_begin
-						// must match local posting co id, set as local hosting co id
-						localCoId := ""
-						func() {
-							po.RLock()
-							defer po.RUnlock()
-							if po.co != nil {
-								localCoId = po.co.id
-							}
-						}()
-						if pkt.Payload != localCoId {
-							panic(errors.NewPacketError(fmt.Sprintf(
-								"Unexpected co begin ack [%s]!=[%s]", pkt.Payload, localCoId,
-							), pkt))
-						}
+						// the corresponding local posting conversation may have already finished without
+						// blocking recv, in which case the next packet right away should be an empty co_ack
+						// todo detect & report violating cases
 					} else {
 						// ack to co_end
 						// nothing more to do than clearing local hosting co id

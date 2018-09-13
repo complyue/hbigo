@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"github.com/complyue/hbigo"
 	"github.com/complyue/hbigo/pkg/errors"
 	"github.com/golang/glog"
@@ -24,38 +25,66 @@ func init() {
 }
 
 var (
-	peerAddr   string
-	apiListing bool
+	peerAddr string
+	echoMode bool
 )
 
 func init() {
 	flag.StringVar(&peerAddr, "peer", "localhost:3232", "HBI peer address")
-	flag.BoolVar(&apiListing, "api", false, "List API on connection")
+	flag.BoolVar(&echoMode, "echo", false, "Start in ECHO (po) mode")
+}
+
+func promptCmdUsage() {
+	fmt.Print(`Commands:
+  :po
+    switch to posting mode
+  :ho
+    switch to hosting mode
+`)
 }
 
 func main() {
+	var err error
 	defer func() {
 		if err := recover(); err != nil {
 			glog.Errorf("Unexpected error: %+v", errors.RichError(err))
 			os.Exit(3)
 		}
+		println("\nBye.\n")
 	}()
 
 	flag.Parse()
 
-	hbic, err := hbi.DialTCP(hbi.NewHoContext(), peerAddr)
+	var hbic *hbi.TCPConn
+	hbic, err = hbi.DialTCP(hbi.NewHoContext(), peerAddr)
 	if err != nil {
 		panic(errors.Wrap(err, "Connection error"))
 	}
 	defer hbic.Close()
 
-	line := liner.NewLiner()
-	defer line.Close()
+	poLiner := liner.NewLiner()
+	defer poLiner.Close()
+	poLiner.SetCtrlCAborts(true)
+	hoLiner := liner.NewLiner()
+	defer hoLiner.Close()
+	hoLiner.SetCtrlCAborts(true)
 
-	line.SetCtrlCAborts(true)
+	const (
+		HoPrompt = "hbi#ho> "
+		PoPrompt = "hbi#po> "
+	)
+	var (
+		poMode = false
+		line   = hoLiner
+		prompt = HoPrompt
+		code   = ""
+	)
 
-	if apiListing {
-		hbic.Notif(`
+	if echoMode {
+		poMode = true
+		line = poLiner
+		prompt = PoPrompt
+		err = hbic.Notif(`
 import (
 	"bytes"
 	"fmt"
@@ -70,28 +99,88 @@ func echo(args ...interface{}) {
 
 echo("API:", API)
 `)
+		if err != nil {
+			panic(err)
+		}
 	}
 
-	for {
+	// plant some common artifacts into hosting env
+	_, _, err = hbic.Hosting.Exec(`
+p2p := PoToPeer()
+co, err := p2p.Co()
+if err == nil {
+  co.Close()
+  co = nil
+}
+`)
+	if err != nil {
+		panic(err)
+	}
 
-		if hbic.Posting.Cancelled() {
-			break
-		}
+	for !hbic.Posting.Cancelled() {
 
-		code, err := line.Prompt("hbi> ")
+		code, err = line.Prompt(prompt)
 		if err != nil {
 			switch err {
-			case io.EOF: // Ctrl^D
 			case liner.ErrPromptAborted: // Ctrl^C
-			default:
-				panic(errors.RichError(err))
+				hbic.Cancel(err)
+				fallthrough
+			case io.EOF: // Ctrl^D
+				err = nil // shield from deferred handler
+				return
 			}
-			break
+			panic(errors.RichError(err))
 		}
 
-		hbic.Notif(code)
-	}
+		if len(code) < 1 {
+			continue
+		}
+		if code[0] == '?' || code == "h" || code == "help" {
+			promptCmdUsage()
+			continue
+		}
+		if code[0] == ':' {
+			// cmd entered
+			switch code[1:] {
+			case "po":
+				poMode = true
+				line = poLiner
+				prompt = "hbi#po> "
+			case "ho":
+				poMode = false
+				line = hoLiner
+				prompt = "hbi#ho> "
+			case "?":
+				fallthrough
+			case "h":
+				fallthrough
+			case "help":
+				promptCmdUsage()
+			default:
+				fmt.Printf("Unknown cmd: %s\n", code[1:])
+			}
+			continue
+		}
 
-	log.Printf("Bye.")
+		line.AppendHistory(code)
+
+		if poMode {
+			hbic.Notif(code)
+		} else {
+			var (
+				result interface{}
+				ok     bool
+			)
+			result, ok, err = hbic.Hosting.Exec(code)
+			if err != nil {
+				fmt.Printf("%+v\n", err)
+			}
+			if ok {
+				fmt.Printf("Out[ho]:\n%+v\n", result)
+			} else {
+				// eval-ed to nothing
+			}
+		}
+	}
 
 }

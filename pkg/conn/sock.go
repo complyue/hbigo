@@ -61,26 +61,28 @@ func ServeTCP(ctxFact func() HoContext, addr string, cb func(*net.TCPListener)) 
 		ctx := ctxFact()
 
 		ho := NewHostingEndpoint(ctx)
-		hoWire := tcpWire{
+		hoWire := &tcpWire{
 			CancellableContext: ho,
+			netIdent:           netIdent,
 			conn:               conn,
 		}
 		ho.PlugWire(
 			netIdent, conn.LocalAddr(), conn.RemoteAddr(),
 			hoWire.recvPacket, hoWire.recvData, conn.CloseRead,
 		)
-		ho.SetHo(ho) // ctx can intercept this
+		ho.SetHo(ho)
 
 		po := NewPostingEndpoint()
-		poWire := tcpWire{
+		poWire := &tcpWire{
 			CancellableContext: po,
+			netIdent:           netIdent,
 			conn:               conn,
 		}
 		po.PlugWire(
 			netIdent, conn.LocalAddr(), conn.RemoteAddr(),
 			poWire.sendPacket, poWire.sendData, conn.CloseWrite, ho,
 		)
-		ho.SetPoToPeer(po) // ctx can intercept this
+		ho.SetPoToPeer(po)
 
 		ho.StartLandingLoop()
 	}
@@ -107,18 +109,21 @@ func DialTCP(ctx HoContext, addr string) (hbic *TCPConn, err error) {
 	glog.V(1).Infof("New HBI connection established: %s", netIdent)
 
 	ho := NewHostingEndpoint(ctx)
-	hoWire := tcpWire{
+	hoWire := &tcpWire{
 		CancellableContext: ho,
+		netIdent:           netIdent,
 		conn:               conn,
 	}
 	ho.PlugWire(
 		netIdent, conn.LocalAddr(), conn.RemoteAddr(),
 		hoWire.recvPacket, hoWire.recvData, conn.CloseRead,
 	)
+	ho.SetHo(ho)
 
 	po := NewPostingEndpoint()
-	poWire := tcpWire{
+	poWire := &tcpWire{
 		CancellableContext: po,
+		netIdent:           netIdent,
 		conn:               conn,
 	}
 	po.PlugWire(
@@ -126,7 +131,6 @@ func DialTCP(ctx HoContext, addr string) (hbic *TCPConn, err error) {
 		poWire.sendPacket, poWire.sendData, conn.CloseWrite,
 		ho,
 	)
-
 	ho.SetPoToPeer(po)
 
 	ho.StartLandingLoop()
@@ -140,17 +144,21 @@ func DialTCP(ctx HoContext, addr string) (hbic *TCPConn, err error) {
 
 type tcpWire struct {
 	util.CancellableContext
-	conn *net.TCPConn
+
+	netIdent string
+	conn     *net.TCPConn
 
 	readahead []byte
 }
 
-func (wire tcpWire) sendPacket(payload, wireDir string) (n int64, err error) {
+func (wire *tcpWire) sendPacket(payload, wireDir string) (n int64, err error) {
 	if glog.V(3) {
 		defer func() {
 			if err != nil {
-				glog.Infof("HBI sent pkt %d:\n%s\n", n,
-					Packet{wireDir, payload}.String())
+				glog.Error(errors.RichError(err))
+			} else {
+				glog.Infof("HBI wire %s sent pkt %d:\n%s\n", wire.netIdent, n,
+					Packet{WireDir: wireDir, Payload: payload}.String())
 			}
 		}()
 	}
@@ -163,7 +171,7 @@ func (wire tcpWire) sendPacket(payload, wireDir string) (n int64, err error) {
 }
 
 // each []byte will have its len() of data sent, regardless of it cap()
-func (wire tcpWire) sendData(data <-chan []byte) (n int64, err error) {
+func (wire *tcpWire) sendData(data <-chan []byte) (n int64, err error) {
 	var bufs net.Buffers
 	var nb int64
 	for {
@@ -195,11 +203,11 @@ func (wire tcpWire) sendData(data <-chan []byte) (n int64, err error) {
 	return
 }
 
-func (wire tcpWire) recvPacket() (packet *Packet, err error) {
+func (wire *tcpWire) recvPacket() (packet *Packet, err error) {
 	if glog.V(3) {
 		defer func() {
 			if packet != nil {
-				glog.Infof("HBI got pkt:\n%s\n", packet.String())
+				glog.Infof("HBI wire %s got pkt:\n%s\n", wire.netIdent, packet.String())
 			}
 		}()
 	}
@@ -264,13 +272,14 @@ func (wire tcpWire) recvPacket() (packet *Packet, err error) {
 					err = errors.NewWireError("Negative payload length!")
 					return
 				}
-				extraLen := newLen - i - 1
+				plBegin := i + 1
+				extraLen := newLen - plBegin
 				payloadBuf = make([]byte, 0, payloadLen)
 				if extraLen > payloadLen {
 					// got more data than this packet's payload
 					payloadBuf = payloadBuf[:payloadLen]
-					plEnd := i + 1 + payloadLen
-					copy(payloadBuf, hdrBuf[i+1:plEnd])
+					plEnd := plBegin + payloadLen
+					copy(payloadBuf, hdrBuf[plBegin:plEnd])
 					if wire.readahead == nil {
 						wire.readahead = hdrBuf[plEnd:newLen]
 					} else {
@@ -327,7 +336,7 @@ func (wire tcpWire) recvPacket() (packet *Packet, err error) {
 }
 
 // each []byte will be filled up to its full cap
-func (wire tcpWire) recvData(data <-chan []byte) (n int64, err error) {
+func (wire *tcpWire) recvData(data <-chan []byte) (n int64, err error) {
 	var nb int
 	for {
 		select {
