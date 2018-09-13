@@ -172,6 +172,12 @@ func (wire *tcpWire) sendPacket(payload, wireDir string) (n int64, err error) {
 
 // each []byte will have its len() of data sent, regardless of it cap()
 func (wire *tcpWire) sendData(data <-chan []byte) (n int64, err error) {
+	if glog.V(3) {
+		defer func() {
+			glog.Infof("HBI wire %s sent binary data of %d bytes.",
+				wire.netIdent, n)
+		}()
+	}
 	var bufs net.Buffers
 	var nb int64
 	for {
@@ -182,7 +188,7 @@ func (wire *tcpWire) sendData(data <-chan []byte) (n int64, err error) {
 		case buf, ok := <-data:
 			if !ok {
 				// no more buf to send
-				break
+				return
 			}
 			if len(buf) <= 0 {
 				// zero buf, ignore it
@@ -337,6 +343,12 @@ func (wire *tcpWire) recvPacket() (packet *Packet, err error) {
 
 // each []byte will be filled up to its full cap
 func (wire *tcpWire) recvData(data <-chan []byte) (n int64, err error) {
+	if glog.V(3) {
+		defer func() {
+			glog.Infof("HBI wire %s received binary data of %d bytes.",
+				wire.netIdent, n)
+		}()
+	}
 	var nb int
 	for {
 		select {
@@ -346,7 +358,7 @@ func (wire *tcpWire) recvData(data <-chan []byte) (n int64, err error) {
 		case buf, ok := <-data:
 			if !ok {
 				// no more buf to send
-				break
+				return
 			}
 			if len(buf) <= 0 {
 				// zero buf, ignore it
@@ -357,11 +369,11 @@ func (wire *tcpWire) recvData(data <-chan []byte) (n int64, err error) {
 				if err != nil {
 					return
 				}
+				n += int64(nb)
 				if nb >= cap(buf) {
 					// this buf fully filled
 					break
 				}
-				n += int64(nb)
 				// read into rest space
 				buf = buf[nb:cap(buf)]
 			}

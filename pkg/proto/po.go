@@ -192,21 +192,25 @@ func (po *PostingEndpoint) Cancel(err error) {
 		}
 	}()
 
-	// make sure corun context cancelled as well
-	if co := po.co; co != nil {
-		co.Cancel(err)
-	}
-
-	if err != nil {
+	if err != nil { // try send full error info to peer before closer
 		if po.ho != nil && po.ho.coId != "" {
-			// in a hosting conversation, muSend should have been locked in this case
+			// in a hosting conversation,
+			// muSend should have been locked in this case
+		} else if po.co != nil {
+			// in a posting conversation,
+			// muSend should have been locked in this case
 		} else {
 			// todo other cases may deadlock?
 			po.muSend.Lock()
 			defer po.muSend.Unlock()
 		}
-		// try send full error info to peer before closer
-		po.sendPacket(fmt.Sprintf("%+v", errors.RichError(err)), "err")
+		// don't care possible error
+		_, _ = po.sendPacket(fmt.Sprintf("%+v", errors.RichError(err)), "err")
+	}
+
+	// make sure corun context cancelled as well
+	if co := po.co; co != nil {
+		co.Cancel(err)
 	}
 }
 
