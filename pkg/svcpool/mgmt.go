@@ -34,16 +34,18 @@ type master4consumer struct {
 // co send back the service proc address assigned
 func (m4c *master4consumer) AssignProc(session string, sticky bool) {
 	if session == "" && sticky {
-		panic(errors.NewUsageError("Requesting sticky session to empty id ?!"))
+		m4c.Ho().Cancel(errors.NewUsageError("Requesting sticky session to empty id ?!"))
+		return
+	}
+	if m4c.sticky && session != m4c.session {
+		m4c.Ho().Cancel(errors.Errorf("Changing sticky session [%s]=>[%s] ?!", m4c.session, session))
+		return
 	}
 
-	if m4c.sticky && session != m4c.session {
-		panic(errors.Errorf("Changing sticky session [%s]=>[%s] ?!", m4c.session, session))
-	}
 	m4c.session = session
 	m4c.sticky = sticky
-
 	procPort := m4c.pool.assignProc(m4c)
+
 	p2p := m4c.PoToPeer()
 	// a conversation should have been initiated by service consumer endpoint
 	p2p.CoSendCode(fmt.Sprintf(

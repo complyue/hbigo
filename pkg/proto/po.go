@@ -198,8 +198,13 @@ func (po *PostingEndpoint) Cancel(err error) {
 	}
 
 	if err != nil {
-		po.muSend.Lock()
-		defer po.muSend.Unlock()
+		if po.ho != nil && po.ho.coId != "" {
+			// in a hosting conversation, muSend should have been locked in this case
+		} else {
+			// todo other cases may deadlock?
+			po.muSend.Lock()
+			defer po.muSend.Unlock()
+		}
 		// try send full error info to peer before closer
 		po.sendPacket(fmt.Sprintf("%+v", errors.RichError(err)), "err")
 	}
