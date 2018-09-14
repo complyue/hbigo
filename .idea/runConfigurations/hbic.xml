@@ -3,7 +3,7 @@
     <module name="hbigo" />
     <working_directory value="$PROJECT_DIR$/" />
     <go_parameters value="-i" />
-    <parameters value="-v=2 -api" />
+    <parameters value="-echo -v=2" />
     <kind value="PACKAGE" />
     <filePath value="demo/chat/client/main.go" />
     <package value="github.com/complyue/hbigo/cmd/hbic" />

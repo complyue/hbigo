@@ -116,42 +116,41 @@ func (consumer *Consumer) GetService(
 	return
 }
 
-func (consumer *Consumer) AssignProc(session string, sticky bool) (procAddr string, err error) {
+func (consumer *Consumer) AssignProc(session string, sticky bool) (string, error) {
 	consumer.Lock()
 	defer consumer.Unlock()
 
 	consumer.connectMaster()
 	co, err := consumer.PoolMaster.PoToPeer().Co()
 	if err != nil {
-		return
+		return "", err
 	}
 	defer co.Close()
-	var addrStr interface{}
-	addrStr, err = co.Get(fmt.Sprintf(`
+	if addrStr, err := co.Get(fmt.Sprintf(`
 AssignProc(%#v,%#v)
-`, session, sticky))
-	if err != nil {
-		return
+`, session, sticky)); err != nil {
+		return "", nil
+	} else {
+		procAddr := addrStr.(string)
+		return procAddr, nil
 	}
-	procAddr = addrStr.(string)
-	return
 }
 
-func (consumer *Consumer) ReleaseProc(procAddr string) (err error) {
+func (consumer *Consumer) ReleaseProc(procAddr string) error {
 	consumer.Lock()
 	defer consumer.Unlock()
 
 	consumer.connectMaster()
 	co, err := consumer.PoolMaster.PoToPeer().Co()
 	if err != nil {
-		return
+		return err
 	}
 	defer co.Close()
-	_, err = co.Get(fmt.Sprintf(`
+	if _, err := co.Get(fmt.Sprintf(`
 ReleaseProc(%#v)
-`, procAddr))
-	if err != nil {
-		return
+`, procAddr)); err != nil {
+		return err
 	}
-	return
+
+	return nil
 }

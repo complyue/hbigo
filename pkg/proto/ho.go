@@ -3,6 +3,7 @@ package proto
 import (
 	"fmt"
 	"github.com/complyue/hbigo/pkg/errors"
+	"github.com/globalsign/mgo/bson"
 	"github.com/golang/glog"
 	"io"
 	"net"
@@ -28,6 +29,11 @@ type Hosting interface {
 	// actually it's expected to be sent from peer by `co.SendData()`, the size and layout
 	// should have been deducted from previous received data objects
 	CoRecvData(data <-chan []byte) (err error)
+
+	// receive an bson object as map[string]interface{}
+	CoRecvBSON(nBytes int) (m map[string]interface{}, err error)
+
+	ToStr(n int) string
 }
 
 func NewHostingEndpoint(ctx HoContext) *HostingEndpoint {
@@ -57,6 +63,10 @@ type HostingEndpoint struct {
 
 func (ho *HostingEndpoint) HoCtx() HoContext {
 	return ho.HoContext
+}
+
+func (ho *HostingEndpoint) ToStr(n int) string {
+	return fmt.Sprintf("n=%d", n)
 }
 
 func (ho *HostingEndpoint) CoId() string {
@@ -124,6 +134,31 @@ func (ho *HostingEndpoint) CoRecvData(data <-chan []byte) (err error) {
 
 	_, err = ho.recvData(data)
 	return
+}
+
+func (ho *HostingEndpoint) CoRecvBSON(nBytes int) (map[string]interface{}, error) {
+	if ho.CoId() == "" {
+		panic(errors.NewUsageError("Called without conversation ?!"))
+	}
+
+	buf := make([]byte, nBytes)
+	bc := make(chan []byte, 1)
+	bc <- buf
+	close(bc)
+
+	glog.Infof("Receiving BSON of %d bytes ...\n", nBytes)
+
+	if _, err := ho.recvData(bc); err != nil {
+		return nil, err
+	}
+
+	glog.Infof("Received BSON of %d bytes\n", nBytes)
+
+	var m map[string]interface{}
+	if err := bson.Unmarshal(buf, &m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 func (ho *HostingEndpoint) StartLandingLoop() {
@@ -338,7 +373,7 @@ func (ho *HostingEndpoint) landingLoop() {
 				}
 			case "err":
 				// peer error occurred, todo give context package opportunity to handle peer error
-				glog.Error("HBI disconnecting due to peer error: ", pkt.Payload)
+				glog.Error("HBI wire %s disconnecting due to peer error: ", ho.netIdent, pkt.Payload)
 				ho.Close()
 				return
 			default:

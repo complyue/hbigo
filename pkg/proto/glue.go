@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/complyue/hbigo/pkg/errors"
+	"github.com/golang/glog"
 	"reflect"
 )
 
@@ -119,6 +120,17 @@ func PrepareHosting(ctx HoContext) {
 	// expose methods to access the hosting object
 	hc.put("Ho", hc.Ho)
 	hc.put("PoToPeer", hc.PoToPeer)
+
+	// workaround gmacro's ast bug, todo file an issue to gmacro
+	hc.put("CoRecvBSON", func(nBytes int) map[string]interface{} {
+		m, err := hc.ho.CoRecvBSON(nBytes)
+		if err != nil {
+			glog.Error(errors.RichError(err))
+			return nil
+		}
+		return m
+	})
+
 }
 
 var expBlackList map[string]struct{}

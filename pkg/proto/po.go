@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/complyue/hbigo/pkg/errors"
 	. "github.com/complyue/hbigo/pkg/util"
+	"github.com/globalsign/mgo/bson"
 	"github.com/golang/glog"
 	"net"
 	"sync"
@@ -32,6 +33,8 @@ type Posting interface {
 	CoSendCode(code string) (err error)
 	// send data to remote conversation
 	CoSendData(<-chan []byte) (err error)
+	// send a bson map to remote conversation
+	CoSendBSON(m bson.M) error
 
 	// initiate a local conversation
 	// a conversation will hog the underlying posting wire until closed,
@@ -94,20 +97,39 @@ func (po *PostingEndpoint) PlugWire(
 }
 
 func (po *PostingEndpoint) Notif(code string) (err error) {
+	defer func() {
+		if err != nil {
+			// in case sending error occurred, just log & close the wire
+			glog.Error(errors.RichError(err))
+			// .Cancel(err) would cause more error than success
+			po.ho.Close()
+		}
+	}()
 	po.muSend.Lock()
 	defer po.muSend.Unlock()
-	_, err = po.sendPacket(code, "")
+	if _, err = po.sendPacket(code, ""); err != nil {
+		return
+	}
 	return
 }
 
 func (po *PostingEndpoint) NotifCoRun(code string, data <-chan []byte) (err error) {
+	defer func() {
+		if err != nil {
+			// in case sending error occurred, just log & close the wire
+			glog.Error(errors.RichError(err))
+			// .Cancel(err) would cause more error than success
+			po.ho.Close()
+		}
+	}()
 	po.muSend.Lock()
 	defer po.muSend.Unlock()
-	_, err = po.sendPacket(code, "corun")
-	if err != nil {
+	if _, err = po.sendPacket(code, "corun"); err != nil {
 		return
 	}
-	_, err = po.sendData(data)
+	if _, err = po.sendData(data); err != nil {
+		return
+	}
 	return
 }
 
@@ -129,6 +151,30 @@ func (po *PostingEndpoint) CoSendData(data <-chan []byte) (err error) {
 	}
 	_, err = po.sendData(data)
 	return
+}
+
+func (po *PostingEndpoint) CoSendBSON(m bson.M) error {
+	buf, err := bson.Marshal(m)
+	if err != nil {
+		return err
+	}
+	if glog.V(1) {
+		glog.Infof("HBI wire %s sending BSON of %d bytes.", po.netIdent, len(buf))
+	}
+	bc := make(chan []byte, 1)
+	bc <- buf
+	close(bc)
+	if err = po.CoSendCode(fmt.Sprintf(`
+CoRecvBSON(%v)
+`, len(buf))); err != nil {
+		return err
+	}
+	if nSent, err := po.sendData(bc); err != nil {
+		return err
+	} else if glog.V(1) {
+		glog.Infof("HBI wire %s sent BSON of %d bytes.", po.netIdent, nSent)
+	}
+	return nil
 }
 
 func (po *PostingEndpoint) Co() (co Conver, err error) {
