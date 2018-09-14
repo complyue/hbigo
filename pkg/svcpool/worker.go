@@ -1,7 +1,6 @@
 package svcpool
 
 import (
-	"fmt"
 	"github.com/complyue/hbigo"
 )
 
@@ -18,7 +17,7 @@ type WorkerHoContext interface {
 	hbi.HoContext
 
 	// should prepare for the session and send verbatim session id string back via `PoToPeer().CoSendCode()`
-	PrepareSession(session string)
+	PrepareSession(session string) string
 }
 
 func NewWorkerHoContext() WorkerHoContext {
@@ -32,6 +31,6 @@ type workerHoContext struct {
 }
 
 // send verbatim session id string back, to confirm the session prepared
-func (ctx *workerHoContext) PrepareSession(session string) {
-	ctx.PoToPeer().CoSendCode(fmt.Sprintf("%#v", session))
+func (ctx *workerHoContext) PrepareSession(session string) string {
+	return session
 }

@@ -32,14 +32,12 @@ type master4consumer struct {
 }
 
 // co send back the service proc address assigned
-func (m4c *master4consumer) AssignProc(session string, sticky bool) {
+func (m4c *master4consumer) AssignProc(session string, sticky bool) (procAddr string) {
 	if session == "" && sticky {
-		m4c.Ho().Cancel(errors.NewUsageError("Requesting sticky session to empty id ?!"))
-		return
+		panic(errors.NewUsageError("Requesting sticky session to empty id ?!"))
 	}
 	if m4c.sticky && session != m4c.session {
-		m4c.Ho().Cancel(errors.Errorf("Changing sticky session [%s]=>[%s] ?!", m4c.session, session))
-		return
+		panic(errors.Errorf("Changing sticky session [%s]=>[%s] ?!", m4c.session, session))
 	}
 
 	m4c.session = session
@@ -47,17 +45,17 @@ func (m4c *master4consumer) AssignProc(session string, sticky bool) {
 	procPort := m4c.pool.assignProc(m4c)
 
 	p2p := m4c.PoToPeer()
-	// a conversation should have been initiated by service consumer endpoint
-	p2p.CoSendCode(fmt.Sprintf(
+	procAddr = fmt.Sprintf(
 		// use the IP via which this consumer has connected to this pool
 		`"%s:%d"`, p2p.LocalAddr().(*net.TCPAddr).IP.String(), procPort,
-	))
+	)
+	return
 }
 
 // co send back true if the proc is idle after this release, false if its still assigned to some other consumers.
-func (m4c *master4consumer) ReleaseProc(procAddr string) {
+func (m4c *master4consumer) ReleaseProc(procAddr string) (idle bool) {
 	// TODO mark the worker as idle after all consumer released it
-	m4c.PoToPeer().CoSendCode(`false`)
+	return
 }
 
 func (pool *Master) assignProc(consumer *master4consumer) (procPort int) {
@@ -338,7 +336,7 @@ func (w *procWorker) prepareSession(session string) (err error) {
 	var workerSession interface{}
 	workerSession, err = co.Get(fmt.Sprintf(`
 PrepareSession(%#v)
-`, session))
+`, session), nil)
 	if err != nil {
 		return
 	}

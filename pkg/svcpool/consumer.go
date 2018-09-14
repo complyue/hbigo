@@ -128,7 +128,7 @@ func (consumer *Consumer) AssignProc(session string, sticky bool) (string, error
 	defer co.Close()
 	if addrStr, err := co.Get(fmt.Sprintf(`
 AssignProc(%#v,%#v)
-`, session, sticky)); err != nil {
+`, session, sticky), nil); err != nil {
 		return "", nil
 	} else {
 		procAddr := addrStr.(string)
@@ -148,7 +148,7 @@ func (consumer *Consumer) ReleaseProc(procAddr string) error {
 	defer co.Close()
 	if _, err := co.Get(fmt.Sprintf(`
 ReleaseProc(%#v)
-`, procAddr)); err != nil {
+`, procAddr), nil); err != nil {
 		return err
 	}
 

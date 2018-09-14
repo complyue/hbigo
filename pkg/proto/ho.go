@@ -275,7 +275,7 @@ func (ho *HostingEndpoint) landingLoop() {
 				}
 				result, ok, err := ho.Exec(pkt.Payload)
 				if err != nil {
-					panic(errors.NewPacketError("coget exec failure", pkt))
+					panic(err)
 				} else if !ok {
 					panic(errors.NewPacketError("coget code exec to void ?!", pkt))
 				}
