@@ -47,7 +47,7 @@ func (m4c *master4consumer) AssignProc(session string, sticky bool) (procAddr st
 	p2p := m4c.PoToPeer()
 	procAddr = fmt.Sprintf(
 		// use the IP via which this consumer has connected to this pool
-		`"%s:%d"`, p2p.LocalAddr().(*net.TCPAddr).IP.String(), procPort,
+		`%s:%d`, p2p.LocalAddr().(*net.TCPAddr).IP.String(), procPort,
 	)
 	return
 }
