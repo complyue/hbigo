@@ -365,6 +365,24 @@ func (wire *tcpWire) recvData(data <-chan []byte) (n int64, err error) {
 				break
 			}
 			for {
+				if wire.readahead != nil {
+					if len(buf) <= len(wire.readahead) {
+						copy(buf, wire.readahead[:len(buf)])
+						if len(buf) == len(wire.readahead) {
+							wire.readahead = nil
+						} else {
+							wire.readahead = wire.readahead[len(buf):]
+						}
+						// this buf fully filed by readahead data
+						break
+					} else {
+						copy(buf[:len(wire.readahead)], wire.readahead)
+						// this buf only partial filled by readahead data,
+						// read rest from wire
+						buf = buf[len(wire.readahead):]
+						wire.readahead = nil
+					}
+				}
 				nb, err = wire.conn.Read(buf)
 				if err != nil {
 					return

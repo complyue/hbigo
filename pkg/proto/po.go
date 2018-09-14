@@ -158,9 +158,6 @@ func (po *PostingEndpoint) CoSendBSON(m bson.M) error {
 	if err != nil {
 		return err
 	}
-	if glog.V(1) {
-		glog.Infof("HBI wire %s sending BSON of %d bytes.", po.netIdent, len(buf))
-	}
 	bc := make(chan []byte, 1)
 	bc <- buf
 	close(bc)
@@ -169,10 +166,8 @@ CoRecvBSON(%v)
 `, len(buf))); err != nil {
 		return err
 	}
-	if nSent, err := po.sendData(bc); err != nil {
+	if _, err := po.sendData(bc); err != nil {
 		return err
-	} else if glog.V(1) {
-		glog.Infof("HBI wire %s sent BSON of %d bytes.", po.netIdent, nSent)
 	}
 	return nil
 }

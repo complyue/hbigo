@@ -32,8 +32,6 @@ type Hosting interface {
 
 	// receive an bson object as map[string]interface{}
 	CoRecvBSON(nBytes int) (m map[string]interface{}, err error)
-
-	ToStr(n int) string
 }
 
 func NewHostingEndpoint(ctx HoContext) *HostingEndpoint {
@@ -63,10 +61,6 @@ type HostingEndpoint struct {
 
 func (ho *HostingEndpoint) HoCtx() HoContext {
 	return ho.HoContext
-}
-
-func (ho *HostingEndpoint) ToStr(n int) string {
-	return fmt.Sprintf("n=%d", n)
 }
 
 func (ho *HostingEndpoint) CoId() string {
@@ -146,13 +140,9 @@ func (ho *HostingEndpoint) CoRecvBSON(nBytes int) (map[string]interface{}, error
 	bc <- buf
 	close(bc)
 
-	glog.Infof("Receiving BSON of %d bytes ...\n", nBytes)
-
 	if _, err := ho.recvData(bc); err != nil {
 		return nil, err
 	}
-
-	glog.Infof("Received BSON of %d bytes\n", nBytes)
 
 	var m map[string]interface{}
 	if err := bson.Unmarshal(buf, &m); err != nil {
