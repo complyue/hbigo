@@ -7,6 +7,7 @@ import (
 	"github.com/golang/glog"
 	"io"
 	"net"
+	"strings"
 )
 
 type Hosting interface {
@@ -26,12 +27,14 @@ type Hosting interface {
 	CoRecvObj() (result interface{}, err error)
 
 	// receive an inbound binary data stream sent by peer
-	// actually it's expected to be sent from peer by `co.SendData()`, the size and layout
-	// should have been deducted from previous received data objects
+	// the data stream is expected to be sent from peer by `co.SendData()`, the size and layout
+	// should have been deducted from previous scripting landing or received data objects
 	CoRecvData(data <-chan []byte) (err error)
 
-	// receive an bson object as map[string]interface{}
-	CoRecvBSON(nBytes int) (m map[string]interface{}, err error)
+	// receive a bson object. if `booter` is nil, `out` will be a map[string]interface{}, else
+	// out wil be `booter` value as passed in.
+	// the object is expected to be sent from peer by `co.SendBSON()` or `po.CoSendBSON()`.
+	CoRecvBSON(nBytes int, booter interface{}) (out interface{}, err error)
 }
 
 func NewHostingEndpoint(ctx HoContext) *HostingEndpoint {
@@ -130,9 +133,17 @@ func (ho *HostingEndpoint) CoRecvData(data <-chan []byte) (err error) {
 	return
 }
 
-func (ho *HostingEndpoint) CoRecvBSON(nBytes int) (map[string]interface{}, error) {
+func (ho *HostingEndpoint) CoRecvBSON(nBytes int, booter interface{}) (interface{}, error) {
 	if ho.CoId() == "" {
 		panic(errors.NewUsageError("Called without conversation ?!"))
+	}
+	out, err := ho.recvBSON(nBytes, booter)
+	return out, err
+}
+
+func (ho *HostingEndpoint) recvBSON(nBytes int, booter interface{}) (interface{}, error) {
+	if nBytes <= 0 { // short circuit logic
+		return booter, nil
 	}
 
 	buf := make([]byte, nBytes)
@@ -144,11 +155,13 @@ func (ho *HostingEndpoint) CoRecvBSON(nBytes int) (map[string]interface{}, error
 		return nil, err
 	}
 
-	var m map[string]interface{}
-	if err := bson.Unmarshal(buf, &m); err != nil {
+	if booter == nil {
+		booter = map[string]interface{}{}
+	}
+	if err := bson.Unmarshal(buf, booter); err != nil {
 		return nil, err
 	}
-	return m, nil
+	return booter, nil
 }
 
 func (ho *HostingEndpoint) StartLandingLoop() {
@@ -256,6 +269,44 @@ func (ho *HostingEndpoint) landingLoop() {
 			)
 			return
 		case pkt := <-chPkt:
+			if strings.HasPrefix(pkt.WireDir, "coget:") {
+				if ho.coId == "" {
+					panic(errors.NewWireError("coget without conversation ?!"))
+				}
+				result, ok, err := ho.Exec(pkt.Payload)
+				if err != nil {
+					panic(errors.NewPacketError("coget exec failure", pkt))
+				} else if !ok {
+					panic(errors.NewPacketError("coget code exec to void ?!", pkt))
+				}
+				serialization := pkt.WireDir[6:]
+				switch p2p := ho.PoToPeer(); po := p2p.(type) {
+				case *PostingEndpoint:
+					if len(serialization) <= 0 {
+						// simple value, no serialization,
+						// i.e. use native textual representation of hosting language
+						if _, err := po.sendPacket(fmt.Sprintf("%#v", result), ""); err != nil {
+							panic(err)
+						}
+					} else if strings.HasPrefix(serialization, "bson:") {
+						// structured value, use hinted bson serialization
+						bsonHint := serialization[5:]
+						if err := po.sendBSON(result, bsonHint); err != nil {
+							panic(err)
+						}
+					} else {
+						panic(errors.NewPacketError(fmt.Sprintf(
+							"unsupported coget serialization: %s", serialization,
+						), pkt))
+					}
+				case nil:
+					panic(errors.NewPacketError("coget via unidirectional wire ?!", pkt))
+				default:
+					panic(errors.NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
+				}
+				// done with coget, no other wireDir interpretations
+				break
+			}
 			switch pkt.WireDir {
 			case "":
 				if result, ok, err := ho.Exec(pkt.Payload); err != nil {
@@ -285,26 +336,6 @@ func (ho *HostingEndpoint) landingLoop() {
 						panic(errors.NewPacketError("exec failure", pkt))
 					}
 				}()
-			case "coget":
-				if ho.coId == "" {
-					panic(errors.NewWireError("coget without conversation ?!"))
-				}
-				switch p2p := ho.PoToPeer(); po := p2p.(type) {
-				case *PostingEndpoint:
-					if result, ok, err := ho.Exec(pkt.Payload); err != nil {
-						panic(errors.NewPacketError("exec failure", pkt))
-					} else if ok {
-						if _, err := po.sendPacket(fmt.Sprintf("%#v", result), ""); err != nil {
-							panic(err)
-						}
-					} else {
-						panic(errors.NewPacketError("coget code exec to void ?!", pkt))
-					}
-				case nil:
-					panic(errors.NewPacketError("coget via unidirectional wire ?!", pkt))
-				default:
-					panic(errors.NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
-				}
 			case "co_begin":
 				if ho.coId != "" {
 					panic(errors.NewPacketError(fmt.Sprintf(
@@ -363,7 +394,7 @@ func (ho *HostingEndpoint) landingLoop() {
 				}
 			case "err":
 				// peer error occurred, todo give context package opportunity to handle peer error
-				glog.Error("HBI wire %s disconnecting due to peer error: ", ho.netIdent, pkt.Payload)
+				glog.Errorf("HBI wire %s disconnecting due to peer error:\n%s", ho.netIdent, pkt.Payload)
 				ho.Close()
 				return
 			default:

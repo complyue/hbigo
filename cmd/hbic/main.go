@@ -9,6 +9,7 @@ import (
 	"github.com/peterh/liner"
 	"io"
 	"log"
+	"net"
 	"os"
 )
 
@@ -25,21 +26,24 @@ func init() {
 }
 
 var (
-	peerAddr string
-	echoMode bool
+	peerAddr   string
+	remoteMode bool
 )
 
 func init() {
 	flag.StringVar(&peerAddr, "peer", "localhost:3232", "HBI peer address")
-	flag.BoolVar(&echoMode, "echo", false, "Start in ECHO (po) mode")
+	flag.BoolVar(&remoteMode, "remote", false, "Start in remote mode")
 }
 
 func promptCmdUsage() {
 	fmt.Print(`Commands:
-  :po
-    switch to posting mode
-  :ho
-    switch to hosting mode
+  :l
+  :local
+    switch to local mode
+
+  :r
+  :remote
+    switch to remote mode
 `)
 }
 
@@ -62,49 +66,33 @@ func main() {
 	}
 	defer hbic.Close()
 
-	poLiner := liner.NewLiner()
-	defer poLiner.Close()
-	poLiner.SetCtrlCAborts(true)
-	hoLiner := liner.NewLiner()
-	defer hoLiner.Close()
-	hoLiner.SetCtrlCAborts(true)
+	remoteLiner := liner.NewLiner()
+	defer remoteLiner.Close()
+	remoteLiner.SetCtrlCAborts(true)
+	localLiner := liner.NewLiner()
+	defer localLiner.Close()
+	localLiner.SetCtrlCAborts(true)
 
-	const (
-		HoPrompt = "hbi#ho> "
-		PoPrompt = "hbi#po> "
-	)
 	var (
-		poMode = false
-		line   = hoLiner
-		prompt = HoPrompt
-		code   = ""
+		RemotePrompt = fmt.Sprintf("hbi#%s> ", hbic.Conn.RemoteAddr())
+		LocalPrompt  = fmt.Sprintf("hbi#%s> ", hbic.Conn.LocalAddr().(*net.TCPAddr).IP)
+		line         = localLiner
+		prompt       = LocalPrompt
+		code         = ""
 	)
 
-	if echoMode {
-		poMode = true
-		line = poLiner
-		prompt = PoPrompt
+	if remoteMode {
+		line = remoteLiner
+		prompt = RemotePrompt
 		err = hbic.Notif(`
-import (
-	"bytes"
-	"fmt"
-)
-func echo(args ...interface{}) {
-	var s bytes.Buffer
-	for _, arg := range args {
-		s.WriteString(fmt.Sprintf("%+v\n", arg))
-	}
-	PoToPeer().Notif( fmt.Sprintf("println(%#v)",s.String()) )
-}
-
-echo("API:", API)
+reveal("API Available:\n%s", API)
 `)
 		if err != nil {
 			panic(err)
 		}
 	}
 
-	// plant some common artifacts into hosting env
+	// plant some common artifacts into local context
 	_, _, err = hbic.Hosting.Exec(`
 p2p := PoToPeer()
 co, err := p2p.Co()
@@ -142,14 +130,18 @@ if err == nil {
 		if code[0] == ':' {
 			// cmd entered
 			switch code[1:] {
-			case "po":
-				poMode = true
-				line = poLiner
-				prompt = "hbi#po> "
-			case "ho":
-				poMode = false
-				line = hoLiner
-				prompt = "hbi#ho> "
+			case "r":
+				fallthrough
+			case "remote":
+				remoteMode = true
+				line = remoteLiner
+				prompt = RemotePrompt
+			case "l":
+				fallthrough
+			case "local":
+				remoteMode = false
+				line = localLiner
+				prompt = LocalPrompt
 			case "?":
 				fallthrough
 			case "h":
@@ -164,7 +156,7 @@ if err == nil {
 
 		line.AppendHistory(code)
 
-		if poMode {
+		if remoteMode {
 			hbic.Notif(code)
 		} else {
 			var (
@@ -176,7 +168,7 @@ if err == nil {
 				fmt.Printf("%+v\n", err)
 			}
 			if ok {
-				fmt.Printf("Out[ho]:\n%+v\n", result)
+				fmt.Printf("Out[local]:\n%+v\n", result)
 			} else {
 				// eval-ed to nothing
 			}

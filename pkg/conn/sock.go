@@ -11,20 +11,6 @@ import (
 	"strings"
 )
 
-type TCPConn struct {
-	Hosting
-	Posting
-}
-
-func (hbic *TCPConn) Cancel(err error) {
-	defer hbic.Hosting.Cancel(err)
-	defer hbic.Posting.Cancel(err)
-}
-
-func (hbic *TCPConn) Close() {
-	hbic.Cancel(nil)
-}
-
 /*
 Serve with a hosting context factory, at specified local address (host:port)
 
@@ -88,6 +74,21 @@ func ServeTCP(ctxFact func() HoContext, addr string, cb func(*net.TCPListener)) 
 	}
 }
 
+type TCPConn struct {
+	Hosting
+	Posting
+	Conn *net.TCPConn
+}
+
+func (hbic *TCPConn) Cancel(err error) {
+	defer hbic.Hosting.Cancel(err)
+	defer hbic.Posting.Cancel(err)
+}
+
+func (hbic *TCPConn) Close() {
+	hbic.Cancel(nil)
+}
+
 /*
 Connect to specified remote address (host+port) with a hosting context.
 
@@ -137,6 +138,7 @@ func DialTCP(ctx HoContext, addr string) (hbic *TCPConn, err error) {
 
 	hbic = &TCPConn{
 		Hosting: ho, Posting: po,
+		Conn: conn,
 	}
 
 	return

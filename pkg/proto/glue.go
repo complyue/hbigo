@@ -57,9 +57,6 @@ func PrepareHosting(ctx HoContext) {
 		panic(errors.NewUsageError(fmt.Sprintf("No embedded HoContext in struct %s ?!", ct.Name())))
 	}
 
-	// add some overridable utility funcs
-	exports["NewError"] = errors.New
-
 	if !noCustomization {
 		// collected exported methods of the context struct
 		for mi, nm := 0, pv.NumMethod(); mi < nm; mi++ {
@@ -108,27 +105,43 @@ func PrepareHosting(ctx HoContext) {
 		hc.put(k, v)
 		apiText.WriteString(fmt.Sprintf(" * func - %s:\n\t%#v\n", k, v))
 	}
+	// poorman's API manual
 	hc.put("API", apiText.String())
 
 	// plant some non-overridable utility funcs
-	hc.put("pong", func() {}) // nop react to ping back
-	hc.put("ping", func() {   // react to connectivity test, pong back
+
+	// expose methods for hosted error (re)construction
+	exports["NewError"] = errors.New
+
+	// ping/pong game for alive-checking/keeping
+	hc.put("pong", func() {}) // nop response to ping by remote
+	hc.put("ping", func() {   // react to connectivity test, send pong() back
 		if po := hc.po; po != nil {
 			po.Notif("pong()")
 		}
 	})
+
 	// expose methods to access the hosting object
 	hc.put("Ho", hc.Ho)
+	// expose methods to access the posting object
 	hc.put("PoToPeer", hc.PoToPeer)
-
-	// workaround gmacro's ast bug, todo file an issue to gmacro
-	hc.put("CoRecvBSON", func(nBytes int) map[string]interface{} {
-		m, err := hc.ho.CoRecvBSON(nBytes)
+	// expose the bson receiver method, converting err-out to panic, to accommodate `(Co)SendBSON()`
+	hc.put("CoRecvBSON", func(nBytes int, booter interface{}) interface{} {
+		o, err := hc.ho.CoRecvBSON(nBytes, booter)
 		if err != nil {
 			glog.Error(errors.RichError(err))
-			return nil
+			panic(err)
 		}
-		return m
+		return o
+	})
+
+	// expose methods to reveal landing result by this hosting context to peer context
+	// todo use something better than println() ?
+	hc.put("reveal", func(format string, a ...interface{}) {
+		s := fmt.Sprintf(format, a...)
+		if err := hc.PoToPeer().Notif(fmt.Sprintf(`println(%#v)`, s)); err != nil {
+			panic(err)
+		}
 	})
 
 }

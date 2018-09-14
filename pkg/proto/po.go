@@ -27,14 +27,24 @@ type Posting interface {
 	// post notifications with a binary data stream
 	NotifCoRun(code string, data <-chan []byte) (err error)
 
+	// the hosting endpoint
 	Ho() Hosting
 
-	// send code to remote conversation
+	// send code to the remote conversation.
+	// must be in a passive local conversation responding to the remote conversation.
 	CoSendCode(code string) (err error)
-	// send data to remote conversation
+
+	// send data to remote conversation.
+	// must be in a passive local conversation responding to the remote conversation.
 	CoSendData(<-chan []byte) (err error)
-	// send a bson map to remote conversation
-	CoSendBSON(m bson.M) error
+
+	// send a bson object, which may be a map or a struct value, to remote conversation.
+	// must be in a passive local conversation responding to the remote conversation.
+	// the `hint` string can be empty for remote to receive a map[string]interface{},
+	// or it must be a valid Go expression evaluates to a map, or a pointer to a struct,
+	// whose type is either unnamed, or must be available within remote hosting context.
+	// todo impl & document how types are made available for a hosting context
+	CoSendBSON(o interface{}, hint string) error
 
 	// initiate a local conversation
 	// a conversation will hog the underlying posting wire until closed,
@@ -138,7 +148,7 @@ func (po *PostingEndpoint) Ho() Hosting {
 }
 
 func (po *PostingEndpoint) CoSendCode(code string) (err error) {
-	if po.ho.CoId() == "" {
+	if po.ho.coId == "" {
 		panic(errors.NewUsageError("CoSend without hosting conversation ?!"))
 	}
 	_, err = po.sendPacket(code, "")
@@ -146,24 +156,42 @@ func (po *PostingEndpoint) CoSendCode(code string) (err error) {
 }
 
 func (po *PostingEndpoint) CoSendData(data <-chan []byte) (err error) {
-	if po.ho.CoId() == "" {
+	if po.ho.coId == "" {
 		panic(errors.NewUsageError("CoSend without hosting conversation ?!"))
 	}
 	_, err = po.sendData(data)
 	return
 }
 
-func (po *PostingEndpoint) CoSendBSON(m bson.M) error {
-	buf, err := bson.Marshal(m)
+func (po *PostingEndpoint) CoSendBSON(o interface{}, hint string) error {
+	if po.ho.coId == "" {
+		panic(errors.NewUsageError("CoSendBSON without hosting conversation ?!"))
+	}
+	return po.sendBSON(o, hint)
+}
+
+func (po *PostingEndpoint) sendBSON(o interface{}, hint string) error {
+	if hint == "" {
+		// empty hint leads to invalid syntax, convert to literal untyped nil for no hint,
+		// and peer will receive a map[string]interface{}
+		hint = "nil"
+	}
+	if o == nil { // short circuit logic
+		_, err := po.sendPacket(fmt.Sprintf(`
+CoRecvBSON(0,%s)
+`, hint), "")
+		return err
+	}
+	buf, err := bson.Marshal(o)
 	if err != nil {
 		return err
 	}
 	bc := make(chan []byte, 1)
 	bc <- buf
 	close(bc)
-	if err = po.CoSendCode(fmt.Sprintf(`
-CoRecvBSON(%v)
-`, len(buf))); err != nil {
+	if _, err = po.sendPacket(fmt.Sprintf(`
+CoRecvBSON(%v,%s)
+`, len(buf), hint), ""); err != nil {
 		return err
 	}
 	if _, err := po.sendData(bc); err != nil {
