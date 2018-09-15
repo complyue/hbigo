@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"time"
 )
 
 func init() {
@@ -59,8 +60,11 @@ func main() {
 
 	flag.Parse()
 
+	dc := NewDiagnosticContext()
+	dc.Put("dc", dc) // make it self aware
+
 	var hbic *hbi.TCPConn
-	hbic, err = hbi.DialTCP(hbi.NewHoContext(), peerAddr)
+	hbic, err = hbi.DialTCP(dc, peerAddr)
 	if err != nil {
 		panic(errors.Wrap(err, "Connection error"))
 	}
@@ -93,7 +97,7 @@ reveal("API Available:\n%s", API)
 	}
 
 	// plant some common artifacts into local context
-	_, _, err = hbic.Hosting.Exec(`
+	_, _, err = dc.HoContext.Exec(`
 p2p := PoToPeer()
 co, err := p2p.Co()
 if err == nil {
@@ -104,6 +108,10 @@ if err == nil {
 	if err != nil {
 		panic(err)
 	}
+
+	// wait a little while, for possible server msg flushing to come shown,
+	// before prompt.
+	time.Sleep(200 * time.Millisecond)
 
 	for !hbic.Posting.Cancelled() {
 
@@ -163,7 +171,7 @@ if err == nil {
 				result interface{}
 				ok     bool
 			)
-			result, ok, err = hbic.Hosting.Exec(code)
+			result, ok, err = dc.HoContext.Exec(code)
 			if err != nil {
 				fmt.Printf("%+v\n", err)
 			}

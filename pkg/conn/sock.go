@@ -29,6 +29,10 @@ func ServeTCP(ctxFact func() HoContext, addr string, cb func(*net.TCPListener)) 
 	}
 	var listener *net.TCPListener
 	listener, err = net.ListenTCP("tcp", raddr)
+	if err != nil {
+		glog.Error(err)
+		return
+	}
 	if cb != nil {
 		cb(listener)
 	}
@@ -280,7 +284,7 @@ func (wire *tcpWire) recvPacket() (packet *Packet, err error) {
 					err = errors.NewWireError("Negative payload length!")
 					return
 				}
-				plBegin := i + 1
+				plBegin := start + i + 1
 				extraLen := newLen - plBegin
 				payloadBuf = make([]byte, 0, payloadLen)
 				if extraLen > payloadLen {
@@ -289,9 +293,13 @@ func (wire *tcpWire) recvPacket() (packet *Packet, err error) {
 					plEnd := plBegin + payloadLen
 					copy(payloadBuf, hdrBuf[plBegin:plEnd])
 					if wire.readahead == nil {
-						wire.readahead = hdrBuf[plEnd:newLen]
+						wire.readahead = make([]byte, newLen-plEnd)
+						copy(wire.readahead, hdrBuf[plEnd:newLen])
 					} else {
-						wire.readahead = append(hdrBuf[plEnd:newLen], wire.readahead...)
+						readahead := make([]byte, newLen-plEnd+len(wire.readahead))
+						copy(readahead[:newLen-plEnd], hdrBuf[plEnd:newLen])
+						readahead = append(readahead, wire.readahead...)
+						wire.readahead = readahead
 					}
 				} else if extraLen > 0 {
 					// got some data but no more than this packet's payload
