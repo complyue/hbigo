@@ -30,11 +30,6 @@ type Hosting interface {
 	// the data stream is expected to be sent from peer by `co.SendData()`, the size and layout
 	// should have been deducted from previous scripting landing or received data objects
 	CoRecvData(data <-chan []byte) (err error)
-
-	// receive a bson object. if `booter` is nil, `out` will be a map[string]interface{}, else
-	// out wil be `booter` value as passed in.
-	// the object is expected to be sent from peer by `co.SendBSON()` or `po.CoSendBSON()`.
-	CoRecvBSON(nBytes int, booter interface{}) (out interface{}, err error)
 }
 
 func NewHostingEndpoint(ctx HoContext) *HostingEndpoint {
@@ -131,14 +126,6 @@ func (ho *HostingEndpoint) CoRecvData(data <-chan []byte) (err error) {
 
 	_, err = ho.recvData(data)
 	return
-}
-
-func (ho *HostingEndpoint) CoRecvBSON(nBytes int, booter interface{}) (interface{}, error) {
-	if ho.CoId() == "" {
-		panic(errors.NewUsageError("Called without conversation ?!"))
-	}
-	out, err := ho.recvBSON(nBytes, booter)
-	return out, err
 }
 
 func (ho *HostingEndpoint) recvBSON(nBytes int, booter interface{}) (interface{}, error) {
@@ -270,7 +257,7 @@ func (ho *HostingEndpoint) landingLoop() {
 			return
 		case pkt := <-chPkt:
 			if strings.HasPrefix(pkt.WireDir, "coget:") {
-				if ho.coId == "" {
+				if ho.CoId() == "" {
 					panic(errors.NewWireError("coget without conversation ?!"))
 				}
 				result, ok, err := ho.Exec(pkt.Payload)
@@ -313,7 +300,7 @@ func (ho *HostingEndpoint) landingLoop() {
 					// panic to stop the loop, will be logged by deferred err handler above
 					panic(errors.NewPacketError(err, pkt))
 				} else if ok {
-					if ho.coId != "" {
+					if ho.CoId() != "" {
 						// in conversation, send it via chObj to a pending CoRecvObj() call
 						ho.chObj <- result
 					} else {
@@ -323,13 +310,24 @@ func (ho *HostingEndpoint) landingLoop() {
 					// no result from execution, nop
 				}
 			case "corun":
-				// unidirectional wire, assume implicit co_begin/co_end
-				if ho.coId != "" {
-					panic(errors.NewPacketError("corun reentrance ?!", pkt))
+				// start an ad-hoc conversation, assume implicit co_begin/co_end
+				if ho.CoId() != "" {
+					panic(errors.NewPacketError("corun within conversation ?!", pkt))
 				}
-				func() {
-					ho.setCoId(fmt.Sprintf("%p", &pkt.Payload))
+				coId := fmt.Sprintf("adhoc/%p", &pkt.Payload)
+				ho.setCoId(coId)
+				go func() {
 					defer func() {
+						if ho.CoId() != coId {
+							err := errors.NewUsageError(fmt.Sprintf(
+								"adhoc CoId mismatch ?! [%s] vs [%s]", ho.coId, coId,
+							))
+							ho.Cancel(err)
+						}
+						if e := recover(); e != nil {
+							ho.Cancel(errors.RichError(e))
+							return
+						}
 						ho.setCoId("")
 					}()
 					if _, _, err := ho.Exec(pkt.Payload); err != nil {
@@ -337,7 +335,7 @@ func (ho *HostingEndpoint) landingLoop() {
 					}
 				}()
 			case "co_begin":
-				if ho.coId != "" {
+				if ho.CoId() != "" {
 					panic(errors.NewPacketError(fmt.Sprintf(
 						"Unexpected co_begin [%s]=>[%s]", ho.coId, pkt.Payload,
 					), pkt))
@@ -355,7 +353,7 @@ func (ho *HostingEndpoint) landingLoop() {
 					panic(errors.NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
 				}
 			case "co_end":
-				if pkt.Payload != ho.coId {
+				if pkt.Payload != ho.CoId() {
 					panic(errors.NewPacketError(fmt.Sprintf(
 						"Unexpected co_end [%s]!=[%s]", pkt.Payload, ho.coId,
 					), pkt))

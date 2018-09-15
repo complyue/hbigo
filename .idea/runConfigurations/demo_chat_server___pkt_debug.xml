@@ -1,8 +1,9 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="demo chat server" type="GoApplicationRunConfiguration" factoryName="Go Application" singleton="true">
+  <configuration default="false" name="demo chat server - pkt debug" type="GoApplicationRunConfiguration" factoryName="Go Application" singleton="true">
     <module name="hbigo" />
     <working_directory value="$PROJECT_DIR$/" />
     <go_parameters value="-i" />
+    <parameters value="-v=3" />
     <kind value="PACKAGE" />
     <filePath value="demo/chat/server/main.go" />
     <package value="github.com/complyue/hbigo/demo/chat/cmd/server" />

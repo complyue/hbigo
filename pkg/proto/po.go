@@ -22,9 +22,13 @@ type Posting interface {
 	LocalAddr() net.Addr
 	RemoteAddr() net.Addr
 
-	// post notifications (it subscribed to or other publications) to the peer
+	// post a notification to the peer
 	Notif(code string) (err error)
-	// post notifications with a binary data stream
+
+	// post a notification with a bson object to the peer
+	NotifBSON(code string, o interface{}, hint string) error
+
+	// post a notification with a binary data stream to the peer
 	NotifCoRun(code string, data <-chan []byte) (err error)
 
 	// the hosting endpoint
@@ -34,17 +38,16 @@ type Posting interface {
 	// must be in a passive local conversation responding to the remote conversation.
 	CoSendCode(code string) (err error)
 
-	// send data to remote conversation.
-	// must be in a passive local conversation responding to the remote conversation.
-	CoSendData(<-chan []byte) (err error)
-
 	// send a bson object, which may be a map or a struct value, to remote conversation.
 	// must be in a passive local conversation responding to the remote conversation.
 	// the `hint` string can be empty for remote to receive a map[string]interface{},
 	// or it must be a valid Go expression evaluates to a map, or a pointer to a struct,
 	// whose type is either unnamed, or must be available within remote hosting context.
-	// todo impl & document how types are made available for a hosting context
 	CoSendBSON(o interface{}, hint string) error
+
+	// send a binary data stream to remote conversation.
+	// must be in a passive local conversation responding to the remote conversation.
+	CoSendData(<-chan []byte) (err error)
 
 	// initiate a local conversation
 	// a conversation will hog the underlying posting wire until closed,
@@ -123,6 +126,26 @@ func (po *PostingEndpoint) Notif(code string) (err error) {
 	return
 }
 
+func (po *PostingEndpoint) NotifBSON(code string, o interface{}, hint string) (err error) {
+	defer func() {
+		if err != nil {
+			// in case sending error occurred, just log & close the wire
+			glog.Error(errors.RichError(err))
+			// .Cancel(err) would cause more error than success
+			po.ho.Close()
+		}
+	}()
+	po.muSend.Lock()
+	defer po.muSend.Unlock()
+	if _, err = po.sendPacket(code, "corun"); err != nil {
+		return
+	}
+	if err = po.sendBSON(o, hint); err != nil {
+		return
+	}
+	return
+}
+
 func (po *PostingEndpoint) NotifCoRun(code string, data <-chan []byte) (err error) {
 	defer func() {
 		if err != nil {
@@ -178,7 +201,7 @@ func (po *PostingEndpoint) sendBSON(o interface{}, hint string) error {
 	}
 	if o == nil { // short circuit logic
 		_, err := po.sendPacket(fmt.Sprintf(`
-CoRecvBSON(0,%s)
+recvBSON(0,%s)
 `, hint), "")
 		return err
 	}
@@ -190,7 +213,7 @@ CoRecvBSON(0,%s)
 	bc <- buf
 	close(bc)
 	if _, err = po.sendPacket(fmt.Sprintf(`
-CoRecvBSON(%v,%s)
+recvBSON(%v,%s)
 `, len(buf), hint), ""); err != nil {
 		return err
 	}

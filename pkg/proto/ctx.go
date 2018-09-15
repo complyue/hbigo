@@ -25,6 +25,10 @@ type HoContext interface {
 	// be a cancellable context
 	CancellableContext
 
+	// return a slice of values, normally typed nil pointers or zero values,
+	// whose value types are to be exposed to the hosting environment.
+	TypesToExpose() []interface{}
+
 	// execute code sent by peer and return last value as result
 	Exec(code string) (result interface{}, ok bool, err error)
 
@@ -36,7 +40,8 @@ type HoContext interface {
 	Ho() Hosting
 	SetHo(ho Hosting)
 
-	// the stub if not nil, can be used to post packets/streams to peer
+	// the posting endpoint bound to this context
+	// can be nil for a receive only setup
 	PoToPeer() Posting
 	SetPoToPeer(p2p Posting)
 
@@ -59,6 +64,10 @@ type hoContext struct {
 	po Posting
 
 	interp *fast.Interp // never change no need to sync
+}
+
+func (ctx *hoContext) TypesToExpose() []interface{} {
+	return []interface{}{}
 }
 
 func (ctx *hoContext) Ho() Hosting {
@@ -148,6 +157,9 @@ func (ctx *hoContext) Put(key string, value interface{}) {
 func (ctx *hoContext) put(key string, value interface{}) {
 	interp := ctx.interp
 	if t, ok := value.(reflect.Type); ok {
+		if key == "" {
+			key = t.Name()
+		}
 		interp.DeclTypeAlias(key, interp.Comp.Universe.FromReflectType(t))
 		return
 	}

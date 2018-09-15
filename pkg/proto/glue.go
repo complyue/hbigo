@@ -76,7 +76,7 @@ func PrepareHosting(ctx HoContext) {
 		expBlackList = make(map[string]struct{}, len(exports))
 		pt := reflect.ValueOf(hc).Type()
 		vt := pt.Elem()
-		for fi, nf := 0, ct.NumField(); fi < nf; fi++ {
+		for fi, nf := 0, vt.NumField(); fi < nf; fi++ {
 			sf := vt.Field(fi)
 			if sf.PkgPath != "" {
 				continue // ignore unexported field
@@ -96,6 +96,16 @@ func PrepareHosting(ctx HoContext) {
 	hc.Lock()
 	defer hc.Unlock()
 
+	// expose types requested by the ctx
+	for _, v := range ctx.TypesToExpose() {
+		vt := reflect.TypeOf(v)
+		t := vt
+		for t.Kind() == reflect.Ptr {
+			t = t.Elem()
+		}
+		hc.put("", t)
+	}
+
 	var apiText bytes.Buffer
 	for k, v := range exports {
 		if _, ok := expBlackList[k]; ok {
@@ -110,9 +120,6 @@ func PrepareHosting(ctx HoContext) {
 
 	// plant some non-overridable utility funcs
 
-	// expose methods for hosted error (re)construction
-	exports["NewError"] = errors.New
-
 	// ping/pong game for alive-checking/keeping
 	hc.put("pong", func() {}) // nop response to ping by remote
 	hc.put("ping", func() {   // react to connectivity test, send pong() back
@@ -121,13 +128,15 @@ func PrepareHosting(ctx HoContext) {
 		}
 	})
 
-	// expose methods to access the hosting object
-	hc.put("Ho", hc.Ho)
-	// expose methods to access the posting object
-	hc.put("PoToPeer", hc.PoToPeer)
-	// expose the bson receiver method, converting err-out to panic, to accommodate `(Co)SendBSON()`
-	hc.put("CoRecvBSON", func(nBytes int, booter interface{}) interface{} {
-		o, err := hc.ho.CoRecvBSON(nBytes, booter)
+	// expose the bson receiver method, converting err-out to panic.
+	// note `(Co)SendBSON()` depends on availability of this method
+	// at peer hosting env to work
+	hc.put("recvBSON", func(nBytes int, booter interface{}) interface{} {
+		ho := hc.Ho().(*HostingEndpoint)
+		if ho.coId == "" {
+			panic(errors.NewUsageError("Called without conversation ?!"))
+		}
+		o, err := ho.recvBSON(nBytes, booter)
 		if err != nil {
 			glog.Error(errors.RichError(err))
 			panic(err)
@@ -135,11 +144,23 @@ func PrepareHosting(ctx HoContext) {
 		return o
 	})
 
+	// expose methods for hosted error (re)construction
+	exports["NewError"] = errors.New
+
+	// plant some common funcs for diagnostics
+
+	// expose methods to access the hosting object
+	hc.put("Ho", hc.Ho)
+	// expose methods to access the posting object
+	hc.put("PoToPeer", hc.PoToPeer)
+
 	// expose methods to reveal landing result by this hosting context to peer context
 	// todo use something better than println() ?
 	hc.put("reveal", func(format string, a ...interface{}) {
 		s := fmt.Sprintf(format, a...)
-		if err := hc.PoToPeer().Notif(fmt.Sprintf(`println(%#v)`, s)); err != nil {
+		if err := hc.PoToPeer().Notif(fmt.Sprintf(`
+println(%#v)
+`, s)); err != nil {
 			panic(err)
 		}
 	})

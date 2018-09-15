@@ -37,8 +37,14 @@ type Conver interface {
 	//     <not implemented yet>
 	Get(code string, hint interface{}) (result interface{}, err error)
 
-	// send outbound scripts
+	// send a piece of outbound script
 	SendCode(code string) (err error)
+
+	// send a bson object, which may be a map or a struct value, to remote conversation.
+	// the `hint` string can be empty for remote to receive a map[string]interface{},
+	// or it must be a valid Go expression evaluates to a map, or a pointer to a struct,
+	// whose type is either unnamed, or must be available within remote hosting context.
+	SendBSON(o interface{}, hint string) error
 
 	// send a binary data stream, the peer must understand the size and layout of this stream,
 	// from previous posted scripts, actually it's expected previous scripts do trigger peer side
@@ -46,26 +52,19 @@ type Conver interface {
 	// matching []bytes series posted here.
 	SendData(data <-chan []byte) (err error)
 
-	// send a bson object, which may be a map or a struct value, to remote conversation.
-	// the `hint` string can be empty for remote to receive a map[string]interface{},
-	// or it must be a valid Go expression evaluates to a map, or a pointer to a struct,
-	// whose type is either unnamed, or must be available within remote hosting context.
-	// todo impl & document how types are made available for a hosting context
-	SendBSON(o interface{}, hint string) error
-
 	// receive an inbound data object created by landing scripts sent by peer
 	// the scripts is expected to be sent from peer by `po.CoSendCode()`
 	RecvObj() (result interface{}, err error)
-
-	// receive an inbound binary data stream sent by peer
-	// actually it's expected to be sent from peer by `po.CoSendData()`, the size and layout
-	// should have been deducted from previous received data objects
-	RecvData(data <-chan []byte) (err error)
 
 	// receive a bson object. if `booter` is nil, `out` will be a map[string]interface{}, else
 	// out wil be `booter` value as passed in.
 	// the object is expected to be sent from peer by `co.SendBSON()` or `po.CoSendBSON()`.
 	RecvBSON(nBytes int, booter interface{}) (out interface{}, err error)
+
+	// receive an inbound binary data stream sent by peer
+	// actually it's expected to be sent from peer by `po.CoSendData()`, the size and layout
+	// should have been deducted from previous received data objects
+	RecvData(data <-chan []byte) (err error)
 
 	// finish this conversation to release the wire for other traffic
 	Close()

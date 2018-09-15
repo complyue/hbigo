@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 	"github.com/complyue/hbigo"
-	"github.com/complyue/hbigo/demo/chat"
+	"github.com/complyue/hbigo/demo/chat/pkg/chat"
 	"github.com/golang/glog"
 	"log"
 	"net"
@@ -21,12 +21,20 @@ func init() {
 
 }
 
+var (
+	servAddr string
+)
+
+func init() {
+	flag.StringVar(&servAddr, "serv", "localhost:3232", "HBI serving address")
+}
+
 func main() {
 
 	flag.Parse()
 
-	hbi.ServeTCP(chat.NewChatContext, "127.0.0.1:3232", func(listener *net.TCPListener) {
-		log.Println("HBI chat server listening:", listener.Addr())
+	hbi.ServeTCP(chat.NewServiceContext, servAddr, func(listener *net.TCPListener) {
+		log.Println("HBI chat serving:", listener.Addr())
 	})
 
 }

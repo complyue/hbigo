@@ -2,13 +2,17 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"github.com/complyue/hbigo"
+	"github.com/complyue/hbigo/demo/chat/pkg/chat"
 	"github.com/complyue/hbigo/pkg/errors"
 	"github.com/golang/glog"
 	"github.com/peterh/liner"
 	"io"
 	"log"
+	"net"
 	"os"
+	"os/user"
 )
 
 func init() {
@@ -32,6 +36,12 @@ func init() {
 }
 
 func main() {
+
+	osUser, err := user.Current()
+	if err != nil {
+		panic(err)
+	}
+
 	defer func() {
 		if err := recover(); err != nil {
 			glog.Errorf("Unexpected error: %+v", errors.RichError(err))
@@ -41,11 +51,18 @@ func main() {
 
 	flag.Parse()
 
-	hbic, err := hbi.DialTCP(hbi.NewHoContext(), peerAddr)
+	api := &chat.ConsumerAPI{}
+
+	hbic, err := hbi.DialTCP(api.GetHoContext(), peerAddr)
 	if err != nil {
 		panic(errors.Wrap(err, "Connection error"))
 	}
 	defer hbic.Close()
+
+	welcomeMsg := api.WaitWelcome()
+	fmt.Fprintf(os.Stderr, "Connected to %s\n%s\n", peerAddr, welcomeMsg)
+	api.SetOutput(os.Stderr)
+	api.SetNick(fmt.Sprintf("%s%%%d", osUser.Name, hbic.Conn.LocalAddr().(*net.TCPAddr).Port))
 
 	line := liner.NewLiner()
 	defer line.Close()
@@ -58,7 +75,7 @@ func main() {
 			break
 		}
 
-		code, err := line.Prompt("chat> ")
+		code, err := line.Prompt(fmt.Sprintf("chat: %s> ", api.Nick))
 		if err != nil {
 			switch err {
 			case io.EOF: // Ctrl^D
@@ -68,8 +85,17 @@ func main() {
 			}
 			break
 		}
+		if len(code) < 1 {
+			continue
+		}
+		line.AppendHistory(code)
 
-		hbic.Notif(code)
+		if code[0] == '#' {
+			api.Goto(code[1:])
+		} else {
+			api.Say(code)
+		}
+
 	}
 
 	log.Printf("Bye.")

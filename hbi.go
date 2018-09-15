@@ -9,6 +9,7 @@ HBI connectivity, including:
 
 TODO:
 	resource aware flow control w/ back pressure
+	certification based connection security, crypto/tls
 
 */
 package hbi
