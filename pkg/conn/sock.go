@@ -74,7 +74,7 @@ func ServeTCP(ctxFact func() HoContext, addr string, cb func(*net.TCPListener)) 
 		)
 		ho.SetPoToPeer(po)
 
-		ho.StartLandingLoop()
+		ho.StartLandingLoops()
 	}
 }
 
@@ -138,7 +138,7 @@ func DialTCP(ctx HoContext, addr string) (hbic *TCPConn, err error) {
 	)
 	ho.SetPoToPeer(po)
 
-	ho.StartLandingLoop()
+	ho.StartLandingLoops()
 
 	hbic = &TCPConn{
 		Hosting: ho, Posting: po,
@@ -163,8 +163,8 @@ func (wire *tcpWire) sendPacket(payload, wireDir string) (n int64, err error) {
 			if err != nil {
 				glog.Error(errors.RichError(err))
 			} else {
-				glog.Infof("HBI wire %s sent pkt %d:\n%s\n", wire.netIdent, n,
-					Packet{WireDir: wireDir, Payload: payload}.String())
+				glog.Infof("HBI wire %s sent pkt %d:\n%+v\n",
+					wire.netIdent, n, Packet{WireDir: wireDir, Payload: payload})
 			}
 		}()
 	}
@@ -219,7 +219,7 @@ func (wire *tcpWire) recvPacket() (packet *Packet, err error) {
 	if glog.V(3) {
 		defer func() {
 			if packet != nil {
-				glog.Infof("HBI wire %s got pkt:\n%s\n", wire.netIdent, packet.String())
+				glog.Infof("HBI wire %s got pkt:\n%+v\n", wire.netIdent, packet)
 			}
 		}()
 	}
@@ -377,20 +377,24 @@ func (wire *tcpWire) recvData(data <-chan []byte) (n int64, err error) {
 			for {
 				if wire.readahead != nil {
 					if len(buf) <= len(wire.readahead) {
-						copy(buf, wire.readahead[:len(buf)])
-						if len(buf) == len(wire.readahead) {
+						nb = len(buf)
+						copy(buf, wire.readahead[:nb])
+						if nb == len(wire.readahead) {
 							wire.readahead = nil
 						} else {
-							wire.readahead = wire.readahead[len(buf):]
+							wire.readahead = wire.readahead[nb:]
 						}
+						n += int64(nb)
 						// this buf fully filed by readahead data
 						break
 					} else {
-						copy(buf[:len(wire.readahead)], wire.readahead)
+						nb = len(wire.readahead)
+						copy(buf[:nb], wire.readahead)
 						// this buf only partial filled by readahead data,
 						// read rest from wire
-						buf = buf[len(wire.readahead):]
+						buf = buf[nb:]
 						wire.readahead = nil
+						n += int64(nb)
 					}
 				}
 				nb, err = wire.conn.Read(buf)

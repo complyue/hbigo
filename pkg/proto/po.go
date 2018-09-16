@@ -199,12 +199,14 @@ func (po *PostingEndpoint) sendBSON(o interface{}, hint string) error {
 		// and peer will receive a map[string]interface{}
 		hint = "nil"
 	}
+
 	if o == nil { // short circuit logic
 		_, err := po.sendPacket(fmt.Sprintf(`
 recvBSON(0,%s)
 `, hint), "")
 		return err
 	}
+
 	buf, err := bson.Marshal(o)
 	if err != nil {
 		return err

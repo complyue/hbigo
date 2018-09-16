@@ -1,6 +1,9 @@
 package proto
 
-import "fmt"
+import (
+	"fmt"
+	"io"
+)
 
 type Packet struct {
 	WireDir string
@@ -8,5 +11,17 @@ type Packet struct {
 }
 
 func (pkt Packet) String() string {
-	return fmt.Sprintf("[%d#%s]%s", len(pkt.Payload), pkt.WireDir, pkt.Payload)
+	return fmt.Sprintf("%v", pkt)
+}
+
+func (pkt Packet) Format(s fmt.State, verb rune) {
+	switch verb {
+	case 's':
+		fallthrough
+	case 'v':
+		io.WriteString(s, fmt.Sprintf("[%d#%s]", len(pkt.Payload), pkt.WireDir))
+		if s.Flag('+') {
+			io.WriteString(s, pkt.Payload)
+		}
+	}
 }
