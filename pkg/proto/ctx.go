@@ -122,7 +122,9 @@ func (ctx *hoContext) Exec(code string) (result interface{}, ok bool, err error)
 		}
 	}()
 
-	// no lock as meant to be called only from landing goro
+	ctx.Lock() // WLock for proper sync
+	defer ctx.Unlock()
+
 	rvs, _ := ctx.interp.Eval(code)
 	switch len(rvs) {
 	case 0:
