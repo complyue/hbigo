@@ -122,7 +122,13 @@ func (ctx *hoContext) Exec(code string) (result interface{}, ok bool, err error)
 		}
 	}()
 
-	// no lock as meant to be called only from landing goro
+	// TODO this is not sync-ed properly in all cases yet:
+	// TODO 	majority of normal code landing is no problem,
+	// TODO 	but corun code is executed from a new goro, if it some how
+	// TODO 	calls into here, that is concurrent interpreter eval,
+	// TODO 	which may crash the process.
+	// TODO		non-reentrant locks won't simply work, but Go seems averse to
+	// TODO		reentrant locks, need to figure out a idiomatic solution.
 	rvs, _ := ctx.interp.Eval(code)
 	switch len(rvs) {
 	case 0:
