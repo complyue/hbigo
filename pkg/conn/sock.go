@@ -178,7 +178,7 @@ func (wire *tcpWire) sendPacket(payload, wireDir string) (n int64, err error) {
 
 // each []byte will have its len() of data sent, regardless of it cap()
 func (wire *tcpWire) sendData(data <-chan []byte) (n int64, err error) {
-	if glog.V(1) {
+	if glog.V(3) {
 		defer func() {
 			glog.Infof("HBI wire %s sent binary data of %d bytes.",
 				wire.netIdent, n)
