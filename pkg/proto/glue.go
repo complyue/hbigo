@@ -122,15 +122,17 @@ func PrepareHosting(ctx HoContext) {
 
 	// ping/pong game for alive-checking/keeping
 	hc.put("pong", func() {}) // nop response to ping by remote
-	hc.put("ping", func() {   // react to connectivity test, send pong() back
+	// react to connectivity test, send pong() back
+	hc.put("ping", func() {
 		if po := hc.po; po != nil {
 			po.Notif("pong()")
 		}
 	})
 
-	// this will be started as new goro by eval `go corun(...)` in interpreter.
 	// only the packet landing goroutine should eval against interpreter, it is
-	// bad for other goros of non-interpreted code to cal interpreter'sl eval.
+	// bad for other goros of non-interpreted code to call interpreter's eval.
+	// so as part of the corun landing procedure, a new goro has to be started
+	// by eval `go corun(...)` against interpreter from the landing loop.
 	hc.put("corun", func(coro func()) {
 		ho := hc.Ho().(*HostingEndpoint)
 
@@ -143,7 +145,7 @@ func PrepareHosting(ctx HoContext) {
 			}
 		}()
 
-		coro() // this interpreter parsed code to be co-run
+		coro() // this is interpreter parsed code to be co-run
 
 		func() { // clean co id
 			ho.muHo.Lock()
