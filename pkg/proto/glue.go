@@ -154,6 +154,7 @@ func PrepareHosting(ctx HoContext) {
 			}
 			ho.coId = ""
 		}()
+
 	})
 
 	// expose the bson receiver method, converting err-out to panic.

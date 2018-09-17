@@ -39,7 +39,7 @@ func NewHostingEndpoint(ctx HoContext) *HostingEndpoint {
 		HoContext: ctx,
 		netIdent:  "?!?",
 		chObj:     make(chan interface{}),
-		cndRecv:   sync.NewCond(new(sync.Mutex)),
+		chRecv:    make(chan struct{}),
 		chPkt:     make(chan Packet),
 	}
 }
@@ -64,9 +64,8 @@ type HostingEndpoint struct {
 	// used to pipe landed objects to receivers
 	chObj chan interface{}
 
-	// condition that packet receiving can proceed
-	cndRecv  *sync.Cond
-	procRecv bool
+	// channel to signal proceed of packet receiving
+	chRecv chan struct{}
 
 	// packet channel
 	chPkt chan Packet
@@ -187,6 +186,11 @@ func (ho *HostingEndpoint) StartLandingLoops() {
 			if glog.V(3) {
 				glog.Infof("HBI wire %+v receiving next packet ...", ho.netIdent)
 			}
+
+			// reset receive proceeding state before receiving a packet, it'll be set  by the
+			// landing loop, after next received packet handed over to it, and it did the landing.
+			//ho.pendNextRecv()
+
 			pkt, err := ho.recvPacket()
 			if err != nil {
 				if err == io.EOF {
@@ -225,22 +229,14 @@ func (ho *HostingEndpoint) StartLandingLoops() {
 				// then we will be receiving next packet from the new tcp socket.
 			}
 
-			// wait proceeding condition before attempt to receive next packet,
+			// wait proceeding signal before attempt to receive next packet,
 			// as landing of the packet may start receiving of streaming binary data,
 			// in which case we should let recvData() be called before next packet recv here
-			ho.procRecv = false
-			for !ho.procRecv { // todo better defer unlock or not ?
-				ho.cndRecv.L.Lock()
-				if glog.V(3) {
-					glog.Infof("HBI wire %+v pending recv next packet ...", ho.netIdent)
-				}
-				ho.cndRecv.Wait()
-				ho.cndRecv.L.Unlock()
-			}
+			<-ho.chRecv
 		}
 	}()
 
-	// primary landing loop, receive & land packets where appropriate
+	// landing loop, land packets handed over from packet receiving loop
 	go func() {
 		for {
 
@@ -265,12 +261,7 @@ func (ho *HostingEndpoint) StartLandingLoops() {
 				}
 
 				// signal next packet receiving
-				func() { // todo better defer unlock or not ?
-					ho.cndRecv.L.Lock()
-					ho.procRecv = true
-					ho.cndRecv.Broadcast()
-					ho.cndRecv.L.Unlock()
-				}()
+				ho.chRecv <- struct{}{}
 
 			}
 
