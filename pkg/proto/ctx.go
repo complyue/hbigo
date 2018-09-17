@@ -1,6 +1,7 @@
 package proto
 
 import (
+	"fmt"
 	"github.com/complyue/hbigo/pkg/errors"
 	. "github.com/complyue/hbigo/pkg/util"
 	"github.com/cosmos72/gomacro/fast"
@@ -31,6 +32,10 @@ type HoContext interface {
 
 	// execute code sent by peer and return last value as result
 	Exec(code string) (result interface{}, ok bool, err error)
+	// execute code sent by peer with an ad-hoc conversation, and necessarily
+	// from a new goroutine. the code is expected to carry no value returning
+	// semantics
+	CoExec(code string) (err error)
 
 	// allow manipulation of contextual state objects
 	Put(key string, value interface{})
@@ -113,6 +118,7 @@ func (ctx *hoContext) Close() {
 	ctx.Cancel(nil)
 }
 
+// should only be called from packet landing goro, it's not properly sync-ed otherwise
 func (ctx *hoContext) Exec(code string) (result interface{}, ok bool, err error) {
 	defer func() {
 		// gomacro Eval may panic, convert it to returned error here
@@ -122,13 +128,6 @@ func (ctx *hoContext) Exec(code string) (result interface{}, ok bool, err error)
 		}
 	}()
 
-	// TODO this is not sync-ed properly in all cases yet:
-	// TODO 	majority of normal code landing is no problem,
-	// TODO 	but corun code is executed from a new goro, if it some how
-	// TODO 	calls into here, that is concurrent interpreter eval,
-	// TODO 	which may crash the process.
-	// TODO		non-reentrant locks won't simply work, but Go seems averse to
-	// TODO		reentrant locks, need to figure out a idiomatic solution.
 	rvs, _ := ctx.interp.Eval(code)
 	switch len(rvs) {
 	case 0:
@@ -144,6 +143,29 @@ func (ctx *hoContext) Exec(code string) (result interface{}, ok bool, err error)
 			r = append(r, v.Interface())
 		}
 		result, ok = r, true
+	}
+	return
+}
+
+// should only be called from packet landing goro, it's not properly sync-ed otherwise
+func (ctx *hoContext) CoExec(code string) (err error) {
+	defer func() {
+		// gomacro Eval may panic, convert it to returned error here
+		if e := recover(); e != nil {
+			err = errors.RichError(e)
+		}
+	}()
+
+	rvs, _ := ctx.interp.Eval(fmt.Sprintf(`
+go corun(func() {
+
+%s
+
+})
+`, code))
+	if len(rvs) != 0 {
+		err = errors.Errorf("Unexpected result from corun: %+v\n", rvs)
+		return
 	}
 	return
 }

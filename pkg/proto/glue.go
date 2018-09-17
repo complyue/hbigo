@@ -128,13 +128,41 @@ func PrepareHosting(ctx HoContext) {
 		}
 	})
 
+	// this will be started as new goro by eval `go corun(...)` in interpreter.
+	// only the packet landing goroutine should eval against interpreter, it is
+	// bad for other goros of non-interpreted code to cal interpreter'sl eval.
+	hc.put("corun", func(coro func()) {
+		ho := hc.Ho().(*HostingEndpoint)
+
+		func() { // check co id
+			ho.muHo.Lock()
+			defer ho.muHo.Unlock()
+
+			if ho.coId != AdhocCoId {
+				panic(errors.Errorf("corun not with ad-hoc co id? [%s]", ho.coId))
+			}
+		}()
+
+		coro() // this interpreter parsed code to be co-run
+
+		func() { // clean co id
+			ho.muHo.Lock()
+			defer ho.muHo.Unlock()
+
+			if ho.coId != AdhocCoId {
+				panic(errors.Errorf("corun lost ad-hoc co id? [%s]", ho.coId))
+			}
+			ho.coId = ""
+		}()
+	})
+
 	// expose the bson receiver method, converting err-out to panic.
 	// note `(Co)SendBSON()` depends on availability of this method
 	// at peer hosting env to work
 	hc.put("recvBSON", func(nBytes int, booter interface{}) interface{} {
 		ho := hc.Ho().(*HostingEndpoint)
 		if ho.coId == "" {
-			panic(errors.NewUsageError("Called without conversation ?!"))
+			panic(errors.NewUsageError("recvBSON called without conversation ?!"))
 		}
 		o, err := ho.recvBSON(nBytes, booter)
 		if err != nil {

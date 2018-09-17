@@ -44,6 +44,8 @@ func NewHostingEndpoint(ctx HoContext) *HostingEndpoint {
 	}
 }
 
+const AdhocCoId = "<adhoc>"
+
 type HostingEndpoint struct {
 	HoContext
 
@@ -55,6 +57,9 @@ type HostingEndpoint struct {
 	recvPacket            func() (*Packet, error)
 	recvData              func(data <-chan []byte) (n int64, err error)
 	closer                func() error
+
+	// hosting mutex, all peer code landing activities should be sync-ed by this lock
+	muHo sync.Mutex
 
 	// used to pipe landed objects to receivers
 	chObj chan interface{}
@@ -74,15 +79,7 @@ func (ho *HostingEndpoint) HoCtx() HoContext {
 }
 
 func (ho *HostingEndpoint) CoId() string {
-	ho.RLock()
-	defer ho.RUnlock()
 	return ho.coId
-}
-
-func (ho *HostingEndpoint) setCoId(coId string) {
-	ho.Lock()
-	defer ho.Unlock()
-	ho.coId = coId
 }
 
 func (ho *HostingEndpoint) NetIdent() string {
@@ -112,8 +109,8 @@ func (ho *HostingEndpoint) PlugWire(
 }
 
 func (ho *HostingEndpoint) CoRecvObj() (result interface{}, err error) {
-	if ho.CoId() == "" {
-		panic(errors.NewUsageError("Called without conversation ?!"))
+	if ho.coId == "" {
+		panic(errors.NewUsageError("CoRecvObj called without conversation ?!"))
 	}
 
 	result, err = ho.recvObj()
@@ -132,8 +129,8 @@ func (ho *HostingEndpoint) recvObj() (interface{}, error) {
 }
 
 func (ho *HostingEndpoint) CoRecvData(data <-chan []byte) (err error) {
-	if ho.CoId() == "" {
-		panic(errors.NewUsageError("Called without conversation ?!"))
+	if ho.coId == "" {
+		panic(errors.NewUsageError("CoRecvData called without conversation ?!"))
 	}
 
 	_, err = ho.recvData(data)
@@ -284,17 +281,22 @@ func (ho *HostingEndpoint) StartLandingLoops() {
 
 // return data object(s) to be sent to chObj, by landing the specified packet
 func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error) {
+	ho.muHo.Lock()
+	defer ho.muHo.Unlock()
+
 	defer func() {
 		// disconnect wire, don't crash the whole process
 		if e := recover(); e != nil {
 			err = errors.RichError(e)
+		}
+		if err != nil {
 			glog.Errorf("HBI landing error: %+v", err)
 			ho.Cancel(err)
 		}
 	}()
 
 	if strings.HasPrefix(pkt.WireDir, "coget:") {
-		if ho.CoId() == "" {
+		if ho.coId == "" {
 			panic(errors.NewWireError("coget without conversation ?!"))
 		}
 		result, ok, err := ho.Exec(pkt.Payload)
@@ -338,7 +340,7 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 			// panic to stop the loop, will be logged by deferred err handler above
 			panic(errors.NewPacketError(err, pkt))
 		} else if ok {
-			if ho.CoId() != "" {
+			if ho.coId != "" {
 				// in conversation, send it via chObj to a pending CoRecvObj() call
 				return []interface{}{result}, nil
 			} else {
@@ -349,32 +351,17 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 		}
 	case "corun":
 		// start an ad-hoc conversation, assume implicit co_begin/co_end
-		if ho.CoId() != "" {
-			// todo should nested corun be supported, here will need a stack to track co ids
-			panic(errors.NewPacketError("corun within conversation ?!", pkt))
+		if ho.coId != "" {
+			panic(errors.Errorf("corun with conversation ? %s", ho.coId))
 		}
-		coId := fmt.Sprintf("adhoc/%p", &pkt.Payload)
-		ho.setCoId(coId)
-		go func() { // start corun in a new goro, TODO `ho.Exec()` need to be sync-ed properly
-			defer func() {
-				if ho.CoId() != coId {
-					err := errors.NewUsageError(fmt.Sprintf(
-						"adhoc CoId mismatch ?! [%s] vs [%s]", ho.coId, coId,
-					))
-					ho.Cancel(err)
-					return
-				} else if e := recover(); e != nil {
-					ho.Cancel(errors.RichError(e))
-					return
-				}
-				ho.setCoId("")
-			}()
-			if _, _, err := ho.Exec(pkt.Payload); err != nil {
-				panic(errors.Wrapf(err, "corun exec failure, pkt=%+v", pkt))
-			}
-		}()
+
+		ho.coId = AdhocCoId
+
+		if err = ho.CoExec(pkt.Payload); err != nil {
+			panic(errors.NewPacketError(err, pkt))
+		}
 	case "co_begin":
-		if ho.CoId() != "" {
+		if ho.coId != "" {
 			panic(errors.NewPacketError(fmt.Sprintf(
 				"Unexpected co_begin [%s]=>[%s]", ho.coId, pkt.Payload,
 			), pkt))
@@ -382,12 +369,12 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 		switch p2p := ho.PoToPeer(); po := p2p.(type) {
 		case *PostingEndpoint:
 			po.muSend.Lock()
-			ho.setCoId(pkt.Payload)
+			ho.coId = pkt.Payload
 			if _, err := po.sendPacket(pkt.Payload, "co_ack"); err != nil {
 				panic(err)
 			}
 		case nil:
-			ho.setCoId(pkt.Payload)
+			ho.coId = pkt.Payload
 		default:
 			panic(errors.NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
 		}
@@ -399,13 +386,13 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 		}
 		switch p2p := ho.PoToPeer(); po := p2p.(type) {
 		case *PostingEndpoint:
-			ho.setCoId("")
+			ho.coId = ""
 			if _, err := po.sendPacket("", "co_ack"); err != nil {
 				panic(err)
 			}
 			po.muSend.Unlock()
 		case nil:
-			ho.setCoId("")
+			ho.coId = ""
 		default:
 			panic(errors.NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
 		}
@@ -423,9 +410,9 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 				// todo necessary to split co_ack into co_ack_begin+co_ack_end ?
 			}
 			// set or clear local hosting co id
-			ho.setCoId(pkt.Payload)
+			ho.coId = pkt.Payload
 		case nil:
-			ho.setCoId(pkt.Payload)
+			ho.coId = pkt.Payload
 		default:
 			panic(errors.NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
 		}
