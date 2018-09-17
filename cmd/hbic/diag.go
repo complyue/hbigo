@@ -69,7 +69,7 @@ func (dc *DiagnosticContext) Exec(code string) (result interface{}, ok bool, err
 	if dc.NextCodeToLand == len(dc.InbCodeHist)-1 && dc.Delegate != nil {
 		// fluent landing by delegate, continue it
 		result, ok, err = dc.Delegate.Exec(code)
-		if err == nil {
+		if err != nil {
 			glog.Error(err)
 			return
 		}
@@ -101,7 +101,7 @@ func (dc *DiagnosticContext) CoExec(code string) (err error) {
 	if dc.NextCoRunToLand == len(dc.InbCoRunHist)-1 && dc.Delegate != nil {
 		// fluent landing by delegate, continue it
 		err = dc.Delegate.CoExec(code)
-		if err == nil {
+		if err != nil {
 			glog.Error(err)
 			return
 		}
@@ -118,6 +118,27 @@ func (dc *DiagnosticContext) CoExec(code string) (err error) {
 	}
 
 	dc.NextCoRunToLand++
+
+	return
+}
+
+func (dc *DiagnosticContext) LandOne() (result interface{}, ok bool, err error) {
+	if dc.NextCodeToLand >= len(dc.InbCodeHist) {
+		fmt.Fprintf(os.Stderr, "[diag] no code pending.")
+		return
+	}
+
+	code := dc.InbCodeHist[dc.NextCodeToLand]
+	if dc.Delegate != nil {
+		result, ok, err = dc.Delegate.Exec(code)
+	} else {
+		result, ok, err = dc.HoContext.Exec(code)
+	}
+	if err != nil {
+		glog.Error(err)
+		return
+	}
+	dc.NextCodeToLand++
 
 	return
 }
