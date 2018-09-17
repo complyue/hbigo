@@ -10,11 +10,12 @@ import (
 
 func NewDiagnosticContext() *DiagnosticContext {
 	return &DiagnosticContext{
-		HoContext: hbi.NewHoContext(),
-		InbHist:   []string{},
-		chResult:  make(chan interface{}),
-		chVoid:    make(chan struct{}),
-		chErr:     make(chan error),
+		HoContext:   hbi.NewHoContext(),
+		InbCodeHist: []string{},
+		chResult:    make(chan interface{}),
+		chVoid:      make(chan struct{}),
+		chErr:       make(chan error),
+		chCo:        make(chan struct{}),
 	}
 }
 
@@ -25,8 +26,10 @@ type DiagnosticContext struct {
 	Delegate hbi.HoContext
 
 	// history of inbound code
-	InbHist    []string
-	NextToLand int
+	InbCodeHist     []string
+	NextCodeToLand  int
+	InbCoRunHist    []string
+	NextCoRunToLand int
 
 	// history of landed result
 	LandHist []interface{}
@@ -35,6 +38,7 @@ type DiagnosticContext struct {
 	chResult chan interface{}
 	chVoid   chan struct{}
 	chErr    chan error
+	chCo     chan struct{}
 }
 
 func (dc *DiagnosticContext) SetDelegate(dele hbi.HoContext) {
@@ -47,34 +51,34 @@ func (dc *DiagnosticContext) SetDelegate(dele hbi.HoContext) {
 	if dele == nil {
 		return
 	}
-	for dc.NextToLand < len(dc.InbHist) {
-		result, _, err := dele.Exec(dc.InbHist[dc.NextToLand])
+	for dc.NextCodeToLand < len(dc.InbCodeHist) {
+		result, _, err := dele.Exec(dc.InbCodeHist[dc.NextCodeToLand])
 		if err != nil {
 			glog.Error(err)
 			return
 		}
-		dc.NextToLand++
+		dc.NextCodeToLand++
 		dc.LandHist = append(dc.LandHist, result)
 	}
 }
 
 // hijack code landing logic
 func (dc *DiagnosticContext) Exec(code string) (result interface{}, ok bool, err error) {
-	dc.InbHist = append(dc.InbHist, code)
+	dc.InbCodeHist = append(dc.InbCodeHist, code)
 
-	if dc.NextToLand == len(dc.InbHist)-1 && dc.Delegate != nil {
+	if dc.NextCodeToLand == len(dc.InbCodeHist)-1 && dc.Delegate != nil {
 		// fluent landing by delegate, continue it
 		result, ok, err = dc.Delegate.Exec(code)
 		if err == nil {
 			glog.Error(err)
 			return
 		}
-		dc.NextToLand++
+		dc.NextCodeToLand++
 		dc.LandHist = append(dc.LandHist, result)
 		return
 	}
 
-	fmt.Fprintf(os.Stderr, "In[%d]:\n#-#-#\n%s\n*-*-*\n", len(dc.InbHist), code)
+	fmt.Fprintf(os.Stderr, "CodeIn[%d]:\n#-#-#\n%s\n*-*-*\n", len(dc.InbCodeHist), code)
 
 	select {
 	case err = <-dc.chErr:
@@ -84,8 +88,36 @@ func (dc *DiagnosticContext) Exec(code string) (result interface{}, ok bool, err
 		ok = false
 	}
 
-	dc.NextToLand++
+	dc.NextCodeToLand++
 	dc.LandHist = append(dc.LandHist, result)
+
+	return
+}
+
+// hijack code landing logic
+func (dc *DiagnosticContext) CoExec(code string) (err error) {
+	dc.InbCoRunHist = append(dc.InbCoRunHist, code)
+
+	if dc.NextCoRunToLand == len(dc.InbCoRunHist)-1 && dc.Delegate != nil {
+		// fluent landing by delegate, continue it
+		err = dc.Delegate.CoExec(code)
+		if err == nil {
+			glog.Error(err)
+			return
+		}
+		dc.NextCoRunToLand++
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "CoRunIn[%d]:\n#-#-#\n%s\n*-*-*\n", len(dc.InbCoRunHist), code)
+
+	select {
+	case err = <-dc.chErr:
+		return
+	case <-dc.chCo:
+	}
+
+	dc.NextCoRunToLand++
 
 	return
 }
@@ -102,7 +134,7 @@ func (dc *DiagnosticContext) Fake(result interface{}) {
 	select {
 	case dc.chResult <- result:
 	default:
-		fmt.Fprintln(os.Stderr, "[diag] no landing pending.")
+		fmt.Fprintln(os.Stderr, "[diag] no code pending.")
 	}
 }
 
@@ -110,7 +142,7 @@ func (dc *DiagnosticContext) FakeVoid() {
 	select {
 	case dc.chVoid <- struct{}{}:
 	default:
-		fmt.Fprintln(os.Stderr, "[diag] no landing pending.")
+		fmt.Fprintln(os.Stderr, "[diag] no code pending.")
 	}
 }
 
@@ -119,5 +151,13 @@ func (dc *DiagnosticContext) FakeErr(err error) {
 	case dc.chErr <- err:
 	default:
 		fmt.Fprintln(os.Stderr, "[diag] no landing pending.")
+	}
+}
+
+func (dc *DiagnosticContext) FakeCo() {
+	select {
+	case dc.chCo <- struct{}{}:
+	default:
+		fmt.Fprintln(os.Stderr, "[diag] no corun pending.")
 	}
 }
