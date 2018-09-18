@@ -25,19 +25,17 @@ type master4consumer struct {
 
 	pool *Master
 
+	// instant value per one assignment request
 	session string
 	sticky  bool
 
 	assignedWorker *procWorker
 }
 
-// co send back the service proc address assigned
+// return the service proc address assigned
 func (m4c *master4consumer) AssignProc(session string, sticky bool) (procAddr string) {
 	if session == "" && sticky {
 		panic(errors.NewUsageError("Requesting sticky session to empty id ?!"))
-	}
-	if m4c.sticky && session != m4c.session {
-		panic(errors.Errorf("Changing sticky session [%s]=>[%s] ?!", m4c.session, session))
 	}
 
 	m4c.session = session
@@ -52,7 +50,8 @@ func (m4c *master4consumer) AssignProc(session string, sticky bool) (procAddr st
 	return
 }
 
-// co send back true if the proc is idle after this release, false if its still assigned to some other consumers.
+// return true if the proc is idle after this release,
+// false if its still assigned to some other consumers.
 func (m4c *master4consumer) ReleaseProc(procAddr string) (idle bool) {
 	// TODO mark the worker as idle after all consumer released it
 	return
@@ -110,8 +109,9 @@ func (pool *Master) assignProc(consumer *master4consumer) (procPort int) {
 	}
 
 	worker = consumer.assignedWorker
-	if worker != nil && worker.checkAlive() {
-		// this consumer has had a worker assigned, and still alive, reused it
+	if worker != nil && worker.checkAlive() && worker.lastSession == consumer.session {
+		// this consumer has had a worker with correct session assigned,
+		// and still alive, reused it
 		return
 	}
 
