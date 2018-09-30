@@ -159,7 +159,7 @@ func (pool *Master) assignProc(consumer *master4consumer) (procPort int) {
 	return
 }
 
-func (pool *Master) registerWorker(pid int, procPort int, ho hbi.Hosting) (w *procWorker) {
+func (pool *Master) registerWorker(pid int, procPort int, ho hbi.Hosting, session string) (w *procWorker) {
 	var ok bool
 
 	w, ok = pool.workersByPid[pid]
@@ -172,7 +172,10 @@ func (pool *Master) registerWorker(pid int, procPort int, ho hbi.Hosting) (w *pr
 	}
 	w.ho = ho
 	w.ProcPort = procPort
-	w.lastSession = ""
+	w.lastSession = session
+	if session != "" {
+		pool.workersBySession[session] = w
+	}
 
 	delete(pool.pendingWorkers, w)
 	pool.idleWorkers <- w
@@ -372,8 +375,8 @@ type master4worker struct {
 	worker *procWorker
 }
 
-func (m4w *master4worker) WorkerOnline(pid int, procPort int) {
-	m4w.worker = m4w.pool.registerWorker(pid, procPort, m4w.Ho())
+func (m4w *master4worker) WorkerOnline(pid int, procPort int, session string) {
+	m4w.worker = m4w.pool.registerWorker(pid, procPort, m4w.Ho(), session)
 }
 
 func (m4w *master4worker) WorkerRetiring() {
