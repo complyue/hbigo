@@ -91,22 +91,9 @@ func (pool *Master) assignProc(consumer *master4consumer) (procPort int) {
 		procPort = worker.ProcPort // set return value
 	}()
 
-	poolQuota := pool.poolSize - len(pool.allWorkers)
-	idleQuota := pool.hotBack - len(pool.pendingWorkers) - len(pool.idleWorkers)
-	if idleQuota > poolQuota {
-		idleQuota = poolQuota
-	}
-	if idleQuota > 0 {
-		glog.V(1).Infof(
-			"Starting %d hot backing proc workers given current numbers: (%d+%d)/%d",
-			idleQuota, len(pool.idleWorkers), len(pool.pendingWorkers), pool.poolSize,
-		)
-		for ; idleQuota > 0; idleQuota-- {
-			_, err = newProcWorker(pool)
-			if err != nil {
-				panic(errors.RichError(err))
-			}
-		}
+	err = pool.EnsureHot()
+	if err != nil {
+		return
 	}
 
 	worker = consumer.assignedWorker

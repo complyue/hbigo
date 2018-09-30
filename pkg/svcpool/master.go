@@ -80,3 +80,30 @@ func (pool *Master) Serve(serviceAddr string) {
 	})
 
 }
+
+func (pool *Master) EnsureHot() error {
+	for w := range pool.allWorkers {
+		w.checkAlive()
+	}
+
+	poolQuota := pool.poolSize - len(pool.allWorkers)
+	idleQuota := pool.hotBack - len(pool.pendingWorkers) - len(pool.idleWorkers)
+	if idleQuota > poolQuota {
+		idleQuota = poolQuota
+	}
+	if idleQuota <= 0 {
+		return nil
+	}
+
+	glog.Infof(
+		"Starting %d hot backing proc workers given current numbers: (%d+%d)/%d",
+		idleQuota, len(pool.idleWorkers), len(pool.pendingWorkers), pool.poolSize,
+	)
+	for ; idleQuota > 0; idleQuota-- {
+		if _, err := newProcWorker(pool); err != nil {
+			return errors.RichError(err)
+		}
+	}
+
+	return nil
+}
