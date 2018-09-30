@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"syscall"
 	"time"
 )
@@ -309,11 +310,20 @@ func (w *procWorker) checkAlive() (alive bool) {
 	if err != nil {
 		return
 	}
+
 	// check pid exists
-	err = w.proc.Signal(syscall.Signal(0))
+	if runtime.GOOS == "windows" {
+		p, err := os.FindProcess(w.proc.Pid)
+		if p == nil || err != nil {
+			return
+		}
+	} else {
+		err = w.proc.Signal(syscall.Signal(0))
+	}
 	if err != nil {
 		return
 	}
+
 	// aliveness confirmed
 	w.lastAct = time.Now()
 	alive = true
