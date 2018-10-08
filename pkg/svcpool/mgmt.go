@@ -13,6 +13,10 @@ import (
 	"time"
 )
 
+// don't restart too quickly, or continuous os failures
+// could create extreme system pressure
+const ReconnectDelay = 10 * time.Second
+
 func newMaster4Consumer(pool *Master) hbi.HoContext {
 	return &master4consumer{
 		HoContext: hbi.NewHoContext(),
@@ -171,9 +175,11 @@ func (pool *Master) registerWorker(pid int, procPort int, ho hbi.Hosting, sessio
 	// restart a new process after disconnected
 	go func() {
 		<-ho.Done()
-		// don't restart too quickly, or continuous os failures
-		// could create extreme system pressure
-		time.Sleep(10 * time.Second)
+		glog.V(1).Infof(
+			"Service proc worker [pid=%v,port=%v] disconnected, restarting in %v ...",
+			pid, procPort, ReconnectDelay,
+		)
+		time.Sleep(ReconnectDelay)
 		w.restartProcess(ho.Err())
 	}()
 
@@ -290,6 +296,17 @@ func (w *procWorker) checkAlive() (alive bool) {
 	if time.Now().Sub(w.lastAct) < (5 * time.Second) {
 		// affirmative recently
 		alive = true
+		return
+	}
+	if startTime, ok := w.pool.pendingWorkers[w]; ok {
+		if time.Now().Sub(startTime) < w.pool.processStartTimeout {
+			// recently restarted
+			alive = true
+			return
+		}
+	}
+	if w.ho.PoToPeer() == nil {
+		// worker not reported in in time
 		return
 	}
 	// verify wire is functioning for sending
