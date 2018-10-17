@@ -37,7 +37,7 @@ type Conver interface {
 	//     <not implemented yet>
 	Get(code string, hint interface{}) (result interface{}, err error)
 
-	// send a piece of outbound script
+	// send a piece of outbound script to run and yield its return value to conversation
 	SendCode(code string) (err error)
 
 	// send a bson object, which may be a map or a struct value, to remote conversation.
@@ -51,6 +51,10 @@ type Conver interface {
 	// funcs to call `ho.CoRecvData()` with a chan of []byte buffers properly sized and laid out,
 	// matching []bytes series posted here.
 	SendData(data <-chan []byte) (err error)
+
+	// send a piece of outbound script to run aside current conversation,
+	// it can receive from current conversation but its return value will be ignored
+	SendCoRun(code string) (err error)
 
 	// receive an inbound data object created by landing scripts sent by peer
 	// the scripts is expected to be sent from peer by `po.CoSendCode()`
@@ -130,6 +134,14 @@ func (co *conver) SendBSON(o interface{}, hint string) error {
 		panic(errors.NewUsageError("Conver mismatch ?!"))
 	}
 	return co.po.sendBSON(o, hint)
+}
+
+func (co *conver) SendCoRun(code string) (err error) {
+	if co.po.co != co {
+		panic(errors.NewUsageError("Conver mismatch ?!"))
+	}
+	_, err = co.po.sendPacket(code, "corun")
+	return
 }
 
 func (co *conver) RecvObj() (result interface{}, err error) {

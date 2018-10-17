@@ -140,8 +140,8 @@ func PrepareHosting(ctx HoContext) {
 			ho.muHo.Lock()
 			defer ho.muHo.Unlock()
 
-			if ho.coId != AdhocCoId {
-				panic(errors.Errorf("corun not with ad-hoc co id? [%s]", ho.coId))
+			if ho.coId == "" {
+				panic(errors.Errorf("corun without co id?"))
 			}
 		}()
 
@@ -151,10 +151,9 @@ func PrepareHosting(ctx HoContext) {
 			ho.muHo.Lock()
 			defer ho.muHo.Unlock()
 
-			if ho.coId != AdhocCoId {
-				panic(errors.Errorf("corun lost ad-hoc co id? [%s]", ho.coId))
+			if ho.coId == AdhocCoId { // close the conversation if it is ad-hoc
+				ho.coId = ""
 			}
-			ho.coId = ""
 		}()
 
 	})

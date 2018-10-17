@@ -32,7 +32,7 @@ type HoContext interface {
 
 	// execute code sent by peer and return last value as result
 	Exec(code string) (result interface{}, ok bool, err error)
-	// execute code sent by peer with an ad-hoc conversation, and necessarily
+	// execute code sent by peer with an conversation, and necessarily
 	// from a new goroutine. the code is expected to carry no value returning
 	// semantics
 	CoExec(code string) (err error)

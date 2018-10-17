@@ -341,13 +341,10 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 			// no result from execution, nop
 		}
 	case "corun":
-		// start an ad-hoc conversation, assume implicit co_begin/co_end
-		if ho.coId != "" {
-			panic(errors.Errorf("corun with conversation ? %s", ho.coId))
+		if ho.coId == "" {
+			// start an ad-hoc conversation if none present atm
+			ho.coId = AdhocCoId
 		}
-
-		ho.coId = AdhocCoId
-
 		if err = ho.CoExec(pkt.Payload); err != nil {
 			panic(errors.NewPacketError(err, pkt))
 		}
