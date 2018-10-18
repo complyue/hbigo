@@ -8,6 +8,60 @@ import (
 	"reflect"
 )
 
+// scan for the deepest *hoContext embedded into the interface,
+// collect exported methods of root, and getters/setters for exported fields at any level.
+func scanForExports(ctx HoContext, exports map[string]interface{}, root *hoContext) *hoContext {
+	var (
+		pv = reflect.ValueOf(ctx)
+		pt = pv.Type()
+		cv = pv.Elem()
+		ct = cv.Type()
+	)
+	if root == nil {
+		root, _ = ctx.(*hoContext)
+	}
+	// collect exported fields of the context struct
+	for fi, nf := 0, ct.NumField(); fi < nf; fi++ {
+		sf := ct.Field(fi)
+		fv := cv.Field(fi)
+		if sf.PkgPath != "" {
+			continue // ignore unexported field
+		}
+		if sf.Anonymous {
+			if "HoContext" == sf.Name {
+				// scan embedded HoContext recursively until found the deepest
+				if root == nil {
+					root = scanForExports(fv.Interface().(HoContext), exports, root)
+				}
+			}
+			continue
+		}
+		// expose field getter/setter func
+		exports[sf.Name] = func() interface{} {
+			return fv.Interface()
+		}
+		exports["Set"+sf.Name] = reflect.MakeFunc(
+			reflect.FuncOf([]reflect.Type{sf.Type}, []reflect.Type{}, false),
+			func(args []reflect.Value) (results []reflect.Value) {
+				fv.Set(args[0])
+				return
+			},
+		)
+	}
+	if ctx != root {
+		// collect exported methods of the context struct
+		for mi, nm := 0, pv.NumMethod(); mi < nm; mi++ {
+			mt := pt.Method(mi)
+			if mt.PkgPath != "" {
+				continue // ignore unexported method
+			}
+			mv := pv.Method(mi)
+			exports[mt.Name] = mv
+		}
+	}
+	return root
+}
+
 /*
 Properly export contextual artifacts (fields, methods, types, etc.) for hosting.
 */
@@ -17,56 +71,12 @@ func PrepareHosting(ctx HoContext) {
 		panic(errors.NewUsageError("nil ctx?!"))
 	}
 	var (
-		hc              *hoContext
-		noCustomization bool
-		pv              = reflect.ValueOf(ctx)
-		pt              = pv.Type()
-		cv              = pv.Elem()
-		ct              = cv.Type()
-		exports         = make(map[string]interface{})
+		hc      *hoContext
+		exports = make(map[string]interface{})
 	)
-	if hc, noCustomization = ctx.(*hoContext); !noCustomization {
-		// collect exported fields of the context struct, and extract embedded hoContext btw
-		for fi, nf := 0, ct.NumField(); fi < nf; fi++ {
-			sf := ct.Field(fi)
-			fv := cv.Field(fi)
-			if sf.PkgPath != "" {
-				continue // ignore unexported field
-			}
-			if sf.Anonymous {
-				if "HoContext" == sf.Name {
-					// there should be one and only one embedded anonymous HoContext
-					hc = fv.Interface().(*hoContext)
-				}
-				continue
-			}
-			// expose field getter/setter func
-			exports[sf.Name] = func() interface{} {
-				return fv.Interface()
-			}
-			exports["Set"+sf.Name] = reflect.MakeFunc(
-				reflect.FuncOf([]reflect.Type{sf.Type}, []reflect.Type{}, false),
-				func(args []reflect.Value) (results []reflect.Value) {
-					fv.Set(args[0])
-					return
-				},
-			)
-		}
-	}
+	hc = scanForExports(ctx, exports, nil)
 	if hc == nil {
-		panic(errors.NewUsageError(fmt.Sprintf("No embedded HoContext in struct %s ?!", ct.Name())))
-	}
-
-	if !noCustomization {
-		// collected exported methods of the context struct
-		for mi, nm := 0, pv.NumMethod(); mi < nm; mi++ {
-			mt := pt.Method(mi)
-			if mt.PkgPath != "" {
-				continue // ignore unexported method
-			}
-			mv := pv.Method(mi)
-			exports[mt.Name] = mv
-		}
+		panic(errors.NewUsageError(fmt.Sprintf("No embedded HoContext in struct %T ?!", ctx)))
 	}
 
 	// prepare black list for names to be filtered when planting artifacts into interpreter,

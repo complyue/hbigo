@@ -124,7 +124,7 @@ func (ctx *hoContext) Exec(code string) (result interface{}, ok bool, err error)
 		// gomacro Eval may panic, convert it to returned error here
 		if e := recover(); e != nil {
 			ok = false
-			err = errors.RichError(e)
+			err = errors.Wrapf(errors.RichError(e), "Error landing exec code: \n%s\n", code)
 		}
 	}()
 
@@ -152,7 +152,7 @@ func (ctx *hoContext) CoExec(code string) (err error) {
 	defer func() {
 		// gomacro Eval may panic, convert it to returned error here
 		if e := recover(); e != nil {
-			err = errors.RichError(e)
+			err = errors.Wrapf(errors.RichError(e), "Error landing corun code: \n%s\n", code)
 		}
 	}()
 
