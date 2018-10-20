@@ -40,7 +40,7 @@ type Posting interface {
 
 	// send a bson object, which may be a map or a struct value, to remote conversation.
 	// must be in a passive local conversation responding to the remote conversation.
-	// the `hint` string can be empty for remote to receive a map[string]interface{},
+	// the `hint` string can be empty for remote to receive a `bson.M`,
 	// or it must be a valid Go expression evaluates to a map, or a pointer to a struct,
 	// whose type is either unnamed, or must be available within remote hosting context.
 	CoSendBSON(o interface{}, hint string) error

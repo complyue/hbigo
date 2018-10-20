@@ -41,7 +41,7 @@ type Conver interface {
 	SendCode(code string) (err error)
 
 	// send a bson object, which may be a map or a struct value, to remote conversation.
-	// the `hint` string can be empty for remote to receive a map[string]interface{},
+	// the `hint` string can be empty for remote to receive a `bson.M`,
 	// or it must be a valid Go expression evaluates to a map, or a pointer to a struct,
 	// whose type is either unnamed, or must be available within remote hosting context.
 	SendBSON(o interface{}, hint string) error
@@ -60,8 +60,8 @@ type Conver interface {
 	// the scripts is expected to be sent from peer by `po.CoSendCode()`
 	RecvObj() (result interface{}, err error)
 
-	// receive a bson object. if `booter` is nil, `out` will be a map[string]interface{}, else
-	// out wil be `booter` value as passed in.
+	// receive a bson object. if `booter` is nil, `out` will be a `bson.M`, else
+	// out will be `booter` value as passed in.
 	// the object is expected to be sent from peer by `co.SendBSON()` or `po.CoSendBSON()`.
 	RecvBSON(nBytes int, booter interface{}) (out interface{}, err error)
 

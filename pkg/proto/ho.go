@@ -151,7 +151,7 @@ func (ho *HostingEndpoint) recvBSON(nBytes int, booter interface{}) (interface{}
 	}
 
 	if booter == nil {
-		booter = map[string]interface{}{}
+		booter = bson.M{}
 	}
 	if err := bson.Unmarshal(buf, booter); err != nil {
 		return nil, err
