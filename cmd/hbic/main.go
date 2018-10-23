@@ -3,15 +3,16 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/complyue/hbigo"
-	"github.com/complyue/hbigo/pkg/errors"
-	"github.com/golang/glog"
-	"github.com/peterh/liner"
 	"io"
 	"log"
 	"net"
 	"os"
 	"time"
+
+	"github.com/complyue/hbigo"
+	"github.com/complyue/hbigo/pkg/errors"
+	"github.com/golang/glog"
+	"github.com/peterh/liner"
 )
 
 func init() {
@@ -27,12 +28,14 @@ func init() {
 }
 
 var (
-	peerAddr   string
-	remoteMode bool
+	peerAddr    string
+	startChoppy bool
+	remoteMode  bool
 )
 
 func init() {
 	flag.StringVar(&peerAddr, "peer", "localhost:3232", "HBI peer address")
+	flag.BoolVar(&startChoppy, "choppy", false, "Start in choppy mode")
 	flag.BoolVar(&remoteMode, "remote", false, "Start in remote mode")
 }
 
@@ -61,6 +64,7 @@ func main() {
 	flag.Parse()
 
 	dc := NewDiagnosticContext()
+	dc.Choppy = startChoppy
 	dc.Put("dc", dc) // make it self aware
 
 	var hbic *hbi.TCPConn

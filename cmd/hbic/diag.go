@@ -2,15 +2,17 @@ package main
 
 import (
 	"fmt"
+	"os"
+
 	"github.com/complyue/hbigo"
 	"github.com/complyue/hbigo/pkg/proto"
 	"github.com/golang/glog"
-	"os"
 )
 
 func NewDiagnosticContext() *DiagnosticContext {
 	return &DiagnosticContext{
 		HoContext:   hbi.NewHoContext(),
+		Choppy:      false,
 		InbCodeHist: []string{},
 		chResult:    make(chan interface{}),
 		chVoid:      make(chan struct{}),
@@ -21,6 +23,9 @@ func NewDiagnosticContext() *DiagnosticContext {
 
 type DiagnosticContext struct {
 	hbi.HoContext
+
+	// Hold landing, for incoming packets to be landed in stepping manners, e.g. by typing in `LandOne()`
+	Choppy bool
 
 	// the active delegate
 	Delegate hbi.HoContext
@@ -64,6 +69,10 @@ func (dc *DiagnosticContext) SetDelegate(dele hbi.HoContext) {
 
 // hijack code landing logic
 func (dc *DiagnosticContext) Exec(code string) (result interface{}, ok bool, err error) {
+	if !dc.Choppy { // normal landing if not choppy
+		return dc.HoContext.Exec(code)
+	}
+
 	dc.InbCodeHist = append(dc.InbCodeHist, code)
 
 	if dc.NextCodeToLand == len(dc.InbCodeHist)-1 && dc.Delegate != nil {
@@ -96,6 +105,10 @@ func (dc *DiagnosticContext) Exec(code string) (result interface{}, ok bool, err
 
 // hijack code landing logic
 func (dc *DiagnosticContext) CoExec(code string) (err error) {
+	if !dc.Choppy { // normal landing if not choppy
+		return dc.HoContext.CoExec(code)
+	}
+
 	dc.InbCoRunHist = append(dc.InbCoRunHist, code)
 
 	if dc.NextCoRunToLand == len(dc.InbCoRunHist)-1 && dc.Delegate != nil {
