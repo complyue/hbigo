@@ -2,13 +2,15 @@ package proto
 
 import (
 	"fmt"
-	"github.com/complyue/hbigo/pkg/errors"
-	"github.com/globalsign/mgo/bson"
-	"github.com/golang/glog"
 	"io"
 	"net"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/complyue/hbigo/pkg/errors"
+	"github.com/globalsign/mgo/bson"
+	"github.com/golang/glog"
 )
 
 type Hosting interface {
@@ -117,13 +119,35 @@ func (ho *HostingEndpoint) CoRecvObj() (result interface{}, err error) {
 }
 
 func (ho *HostingEndpoint) recvObj() (interface{}, error) {
+	// err if already disconnected due to error
+	select {
+	case <-ho.Done():
+		err := ho.Err()
+		if err != nil {
+			return nil, errors.Wrapf(err, "Wire already disconnected due to error.")
+		}
+	default:
+		// fall through
+	}
+
+	// block to receive
 	select {
 	case result := <-ho.chObj:
 		// most normal case, got result
 		return result, nil
 	case <-ho.Done():
 		// disconnected
-		return nil, ho.Err()
+		if err := ho.Err(); err != nil {
+			// disconnected due to error, propagate the error
+			return nil, errors.Wrapf(err, "Wire already disconnected due to error.")
+		}
+		// disconnected normally, give a second chance to receive an object
+		select {
+		case result := <-ho.chObj:
+			return result, nil
+		case <-time.After(1 * time.Millisecond):
+			return nil, errors.New("Wire already disconnected.")
+		}
 	}
 }
 
