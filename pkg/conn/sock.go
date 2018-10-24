@@ -2,13 +2,14 @@ package conn
 
 import (
 	"fmt"
+	"io"
+	"net"
+	"strings"
+
 	"github.com/complyue/hbigo/pkg/errors"
 	. "github.com/complyue/hbigo/pkg/proto"
 	"github.com/complyue/hbigo/pkg/util"
 	"github.com/golang/glog"
-	"io"
-	"net"
-	"strings"
 )
 
 /*
@@ -304,7 +305,7 @@ func (wire *tcpWire) recvPacket() (packet *Packet, err error) {
 				} else if extraLen > 0 {
 					// got some data but no more than this packet's payload
 					payloadBuf = payloadBuf[:extraLen]
-					copy(payloadBuf, hdrBuf[i+1:newLen])
+					copy(payloadBuf, hdrBuf[plBegin:newLen])
 				}
 				break
 			}
