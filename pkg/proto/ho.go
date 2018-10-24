@@ -52,6 +52,7 @@ type HostingEndpoint struct {
 	HoContext
 
 	coId string
+	poCo *conver // current posting conversation armed for receiving
 
 	// Should be set by implementer
 	netIdent              string
@@ -229,8 +230,7 @@ func (ho *HostingEndpoint) StartLandingLoops() {
 			if pkt != nil {
 				// blocking put packet for landing
 				if glog.V(3) {
-					glog.Infof("HBI wire %+v handing over packet: ...\n%+v\n",
-						ho.netIdent, pkt)
+					glog.Infof("HBI wire %+v handing over packet: ...\n%+v\n", ho.netIdent, pkt)
 				}
 				ho.chPkt <- *pkt
 				if glog.V(3) {
@@ -280,7 +280,11 @@ func (ho *HostingEndpoint) StartLandingLoops() {
 				// pump result to receivers
 				if len(gotObjs) > 0 {
 					for _, o := range gotObjs {
-						ho.chObj <- o
+						if ho.poCo == nil {
+							ho.chObj <- o
+						} else {
+							ho.poCo.chObj <- o
+						}
 					}
 				}
 
@@ -373,56 +377,74 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 			panic(errors.NewPacketError(err, pkt))
 		}
 	case "co_begin":
-		if ho.coId != "" {
-			panic(errors.NewPacketError(fmt.Sprintf(
-				"Unexpected co_begin [%s]=>[%s]", ho.coId, pkt.Payload,
-			), pkt))
-		}
 		switch p2p := ho.PoToPeer(); po := p2p.(type) {
 		case *PostingEndpoint:
-			po.muSend.Lock()
-			ho.coId = pkt.Payload
-			if _, err := po.sendPacket(pkt.Payload, "co_ack"); err != nil {
-				panic(err)
-			}
+			go func() { // ack co begin at next send opportunity
+				po.muSend.Lock()
+				defer po.muSend.Unlock()
+				ho.muHo.Lock()
+				defer ho.muHo.Unlock()
+				if ho.coId != "" {
+					panic(errors.NewPacketError(fmt.Sprintf(
+						"Unexpected co_begin [%s]=>[%s]", ho.coId, pkt.Payload,
+					), pkt))
+				}
+				ho.coId = pkt.Payload
+				if _, err := po.sendPacket(pkt.Payload, "co_ack"); err != nil {
+					panic(err)
+				}
+			}()
 		case nil:
 			ho.coId = pkt.Payload
 		default:
 			panic(errors.NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
 		}
 	case "co_end":
-		if pkt.Payload != ho.CoId() {
-			panic(errors.NewPacketError(fmt.Sprintf(
-				"Unexpected co_end [%s]!=[%s]", pkt.Payload, ho.coId,
-			), pkt))
-		}
 		switch p2p := ho.PoToPeer(); po := p2p.(type) {
 		case *PostingEndpoint:
-			ho.coId = ""
-			if _, err := po.sendPacket("", "co_ack"); err != nil {
-				panic(err)
-			}
-			po.muSend.Unlock()
+			go func() { // ack co end at next send opportunity
+				po.muSend.Lock()
+				defer po.muSend.Unlock()
+				ho.muHo.Lock()
+				defer ho.muHo.Unlock()
+				if pkt.Payload != ho.CoId() {
+					panic(errors.NewPacketError(fmt.Sprintf(
+						"Unexpected co_end [%s]!=[%s]", pkt.Payload, ho.coId,
+					), pkt))
+				}
+				ho.coId = ""
+				if _, err := po.sendPacket("", "co_ack"); err != nil {
+					panic(err)
+				}
+			}()
 		case nil:
 			ho.coId = ""
 		default:
 			panic(errors.NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
 		}
-	case "co_ack":
+	case "co_ack": // todo necessary to split co_ack into co_ack_begin+co_ack_end ?
 		switch p2p := ho.PoToPeer(); p2p.(type) {
 		case *PostingEndpoint:
+			po := p2p.(*PostingEndpoint)
 			if pkt.Payload != "" {
 				// ack to co_begin
-				// the corresponding local posting conversation may have already finished without
-				// blocking recv, in which case the next packet right away should be an empty co_ack
-				// todo detect & report violating cases
+				if po.co != nil && po.co.id == pkt.Payload {
+					// current posting conversation matched ack'ed co id,
+					// set as receiving conversation
+					ho.poCo = po.co
+				} else {
+					// the corresponding local posting conversation has already finished without
+					// blocking recv, in this case the next packet right away should be an empty co_ack
+					// todo detect & report violating cases
+				}
+				// set local hosting co id
+				ho.coId = pkt.Payload
 			} else {
 				// ack to co_end
-				// nothing more to do than clearing local hosting co id
-				// todo necessary to split co_ack into co_ack_begin+co_ack_end ?
+				// clear local hosting co id and receiving conversation
+				ho.coId = ""
+				ho.poCo = nil
 			}
-			// set or clear local hosting co id
-			ho.coId = pkt.Payload
 		case nil:
 			ho.coId = pkt.Payload
 		default:

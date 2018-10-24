@@ -2,6 +2,56 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Test Mux Client Pressure",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/test/mux/client",
+      "args": [
+        "-v=3", "-i=1"
+      ]
+    },
+    {
+      "name": "Test Mux Server",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/test/mux/server",
+      "args": [
+        "-v=1"
+      ]
+    },
+    {
+      "name": "Test Mux Client",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/test/mux/client",
+      "args": [
+        "-v=1"
+      ]
+    },
+    {
+      "name": "Test Mux Server pkt debug",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/test/mux/server",
+      "args": [
+        "-v=3"
+      ]
+    },
+    {
+      "name": "Test Mux Client pkt debug ",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/test/mux/client",
+      "args": [
+        "-v=3"
+      ]
+    },
+    {
       "name": "HBIC",
       "type": "go",
       "request": "launch",

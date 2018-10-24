@@ -2,6 +2,8 @@ package proto
 
 import (
 	"fmt"
+	"time"
+
 	"github.com/complyue/hbigo/pkg/errors"
 	. "github.com/complyue/hbigo/pkg/util"
 )
@@ -78,6 +80,7 @@ func newConver(po *PostingEndpoint) *conver {
 	co := &conver{
 		CancellableContext: NewCancellableContext(),
 		po:                 po,
+		chObj:              make(chan interface{}),
 	}
 	co.id = fmt.Sprintf("%p", co)
 	return co
@@ -87,9 +90,9 @@ type conver struct {
 	// embed a cancellable context
 	CancellableContext
 
-	id string
-
-	po *PostingEndpoint
+	po    *PostingEndpoint
+	chObj chan interface{}
+	id    string
 }
 
 func (co *conver) Get(code string, hint interface{}) (result interface{}, err error) {
@@ -109,7 +112,7 @@ func (co *conver) Get(code string, hint interface{}) (result interface{}, err er
 	if err != nil {
 		return
 	}
-	result, err = co.po.ho.recvObj()
+	result, err = co.recvObj()
 	return
 }
 
@@ -148,8 +151,42 @@ func (co *conver) RecvObj() (result interface{}, err error) {
 	if co.po.co != co {
 		panic(errors.NewUsageError("Conver mismatch ?!"))
 	}
-	result, err = co.po.ho.recvObj()
+	result, err = co.recvObj()
 	return
+}
+
+func (co *conver) recvObj() (interface{}, error) {
+	po := co.po
+	// err if already disconnected due to error
+	select {
+	case <-po.Done():
+		err := po.Err()
+		if err != nil {
+			return nil, errors.Wrapf(err, "Wire already disconnected due to error.")
+		}
+	default:
+		// fall through
+	}
+
+	// block to receive
+	select {
+	case result := <-co.chObj:
+		// most normal case, got result
+		return result, nil
+	case <-po.Done():
+		// disconnected
+		if err := po.Err(); err != nil {
+			// disconnected due to error, propagate the error
+			return nil, errors.Wrapf(err, "Wire already disconnected due to error.")
+		}
+		// disconnected normally, give a second chance to receive an object
+		select {
+		case result := <-co.chObj:
+			return result, nil
+		case <-time.After(1 * time.Millisecond):
+			return nil, errors.New("Wire already disconnected.")
+		}
+	}
 }
 
 func (co *conver) RecvData(data <-chan []byte) (err error) {

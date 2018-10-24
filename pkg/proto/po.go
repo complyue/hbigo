@@ -2,12 +2,13 @@ package proto
 
 import (
 	"fmt"
+	"net"
+	"sync"
+
 	"github.com/complyue/hbigo/pkg/errors"
 	. "github.com/complyue/hbigo/pkg/util"
 	"github.com/globalsign/mgo/bson"
 	"github.com/golang/glog"
-	"net"
-	"sync"
 )
 
 /*
@@ -78,7 +79,12 @@ type PostingEndpoint struct {
 	ho *HostingEndpoint
 
 	muSend sync.Mutex
-	co     *conver
+
+	// points to muSend if locked that for sending from a passive conversation,
+	// or should be nil
+	coLock *sync.Mutex
+
+	co *conver
 }
 
 func (po *PostingEndpoint) NetIdent() string {
@@ -135,8 +141,11 @@ func (po *PostingEndpoint) NotifBSON(code string, o interface{}, hint string) (e
 			po.ho.Close()
 		}
 	}()
-	po.muSend.Lock()
-	defer po.muSend.Unlock()
+	co, err := po.Co()
+	if err != nil {
+		return err
+	}
+	defer co.Close()
 	if _, err = po.sendPacket(code, "corun"); err != nil {
 		return
 	}
@@ -155,8 +164,11 @@ func (po *PostingEndpoint) NotifCoRun(code string, data <-chan []byte) (err erro
 			po.ho.Close()
 		}
 	}()
-	po.muSend.Lock()
-	defer po.muSend.Unlock()
+	co, err := po.Co()
+	if err != nil {
+		return err
+	}
+	defer co.Close()
 	if _, err = po.sendPacket(code, "corun"); err != nil {
 		return
 	}
@@ -174,6 +186,12 @@ func (po *PostingEndpoint) CoSendCode(code string) (err error) {
 	if po.ho.coId == "" {
 		panic(errors.NewUsageError("CoSend without hosting conversation ?!"))
 	}
+
+	if po.coLock == nil {
+		po.muSend.Lock()
+		po.coLock = &po.muSend
+	}
+
 	_, err = po.sendPacket(code, "")
 	return
 }
@@ -182,6 +200,12 @@ func (po *PostingEndpoint) CoSendData(data <-chan []byte) (err error) {
 	if po.ho.coId == "" {
 		panic(errors.NewUsageError("CoSend without hosting conversation ?!"))
 	}
+
+	if po.coLock == nil {
+		po.muSend.Lock()
+		po.coLock = &po.muSend
+	}
+
 	_, err = po.sendData(data)
 	return
 }
@@ -190,6 +214,12 @@ func (po *PostingEndpoint) CoSendBSON(o interface{}, hint string) error {
 	if po.ho.coId == "" {
 		panic(errors.NewUsageError("CoSendBSON without hosting conversation ?!"))
 	}
+
+	if po.coLock == nil {
+		po.muSend.Lock()
+		po.coLock = &po.muSend
+	}
+
 	return po.sendBSON(o, hint)
 }
 

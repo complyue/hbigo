@@ -3,9 +3,10 @@ package proto
 import (
 	"bytes"
 	"fmt"
+	"reflect"
+
 	"github.com/complyue/hbigo/pkg/errors"
 	"github.com/golang/glog"
-	"reflect"
 )
 
 // scan for the deepest *hoContext embedded into the interface,
@@ -145,6 +146,7 @@ func PrepareHosting(ctx HoContext) {
 	// by eval `go corun(...)` against interpreter from the landing loop.
 	hc.put("corun", func(coro func()) {
 		ho := hc.Ho().(*HostingEndpoint)
+		po := hc.PoToPeer().(*PostingEndpoint)
 
 		func() { // check co id
 			ho.muHo.Lock()
@@ -152,6 +154,15 @@ func PrepareHosting(ctx HoContext) {
 
 			if ho.coId == "" {
 				panic(errors.Errorf("corun without co id?"))
+			}
+		}()
+
+		defer func() {
+			// po.CoSendXXX() may optionally lock muSend (and set coLock),
+			// unlock it anyway when coming back from coro
+			if coLock := po.coLock; coLock != nil {
+				po.coLock = nil
+				coLock.Unlock()
 			}
 		}()
 
