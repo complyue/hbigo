@@ -417,13 +417,25 @@ func (ho *HostingEndpoint) StartLandingLoops() {
 					// posting (active) receiver is considered backlog if a hosting (passive) receiver is set
 					if ho.hoRcvr != nil {
 						chObj = ho.hoRcvr
+						if glog.V(3) {
+							glog.Infof("Giving landed %d object(s) to hosting receiver %p ...", len(gotObjs), chObj)
+						}
 					} else if ho.poRcvr != nil {
 						chObj = ho.poRcvr
+						if glog.V(3) {
+							glog.Infof("Giving landed %d object(s) to posting receiver %p ...", len(gotObjs), chObj)
+						}
 					} else {
 						panic(errors.NewWireError("No receiver for landed objects."))
 					}
-					for _, o := range gotObjs {
+					for i, o := range gotObjs {
+						if glog.V(3) {
+							glog.Infof("Giving %d/%d object to receiver %p ...", i+1, len(gotObjs), chObj)
+						}
 						chObj <- o
+					}
+					if glog.V(3) {
+						glog.Infof("All landed %d object(s) given to receiver %p", len(gotObjs), chObj)
 					}
 				}
 
@@ -471,8 +483,9 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 			panic(errors.NewPacketError("coget code exec to void ?!", ho.netIdent, pkt))
 		}
 		serialization := pkt.WireDir[6:]
-		switch p2p := ho.PoToPeer(); po := p2p.(type) {
-		case *PostingEndpoint:
+		go func() {
+			po := ho.CoPo().(*PostingEndpoint)
+
 			if len(serialization) <= 0 {
 				// simple value, no serialization,
 				// i.e. use native textual representation of hosting language
@@ -490,11 +503,7 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 					"unsupported coget serialization: %+v", serialization,
 				), ho.netIdent, pkt))
 			}
-		case nil:
-			panic(errors.NewPacketError("coget via unidirectional wire ?!", ho.netIdent, pkt))
-		default:
-			panic(errors.NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
-		}
+		}()
 		// done with coget, no other wireDir interpretations
 		return nil, nil
 	}
@@ -561,6 +570,9 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 				// current posting conversation matched ack'ed co id,
 				// set its object receiving channel as posting (active) receiver
 				ho.poRcvr = po.co.chObj
+				if glog.V(3) {
+					glog.Infof("Posting conversation %s acked, receiver %p armed.", po.co.id, po.co.chObj)
+				}
 			} else {
 				// the corresponding local posting conversation has already finished without
 				// blocking recv, in this case the next packet right away should be an empty co_ack

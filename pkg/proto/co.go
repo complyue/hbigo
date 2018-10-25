@@ -6,6 +6,7 @@ import (
 
 	"github.com/complyue/hbigo/pkg/errors"
 	. "github.com/complyue/hbigo/pkg/util"
+	"github.com/golang/glog"
 )
 
 /*
@@ -156,6 +157,12 @@ func (co *conver) RecvObj() (result interface{}, err error) {
 }
 
 func (co *conver) recvObj() (interface{}, error) {
+	if glog.V(3) {
+		glog.Infof("Receiving object from posting conversation %s receiver %p ...", co.id, co.chObj)
+		defer func() {
+			glog.Infof("Done receiving object from posting conversation %s receiver %p ...", co.id, co.chObj)
+		}()
+	}
 	po := co.po
 	// err if already disconnected due to error
 	select {
