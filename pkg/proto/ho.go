@@ -17,13 +17,25 @@ type Hosting interface {
 	HoContext
 	HoCtx() HoContext
 
+	// send code to the remote conversation.
+	// must be in a passive local conversation responding to the remote conversation.
+	CoSendCode(code string) (err error)
+
+	// send a bson object, which may be a map or a struct value, to remote conversation.
+	// must be in a passive local conversation responding to the remote conversation.
+	// the `hint` string can be empty for remote to receive a `bson.M`,
+	// or it must be a valid Go expression evaluates to a map, or a pointer to a struct,
+	// whose type is either unnamed, or must be available within remote hosting context.
+	CoSendBSON(o interface{}, hint string) error
+
+	// send a binary data stream to remote conversation.
+	// must be in a passive local conversation responding to the remote conversation.
+	CoSendData(<-chan []byte) (err error)
+
 	// identity from the network's view
 	NetIdent() string
 	LocalAddr() net.Addr
 	RemoteAddr() net.Addr
-
-	// local hosting conversation id
-	CoId() string
 
 	// receive an inbound data object created by landing scripts sent by peer
 	// the scripts is expected to be sent from peer by `co.SendCode()`
@@ -40,19 +52,22 @@ func NewHostingEndpoint(ctx HoContext) *HostingEndpoint {
 	return &HostingEndpoint{
 		HoContext: ctx,
 		netIdent:  "?!?",
-		chObj:     make(chan interface{}),
-		chRecv:    make(chan struct{}),
-		chPkt:     make(chan Packet),
+
+		chCoID: make(chan string, 2),
+		hoRcvr: nil,
+		poRcvr: nil,
+
+		// should be obtained in blocking manner by CoPo()
+		coPo:  nil,
+		poCnd: sync.NewCond(new(sync.Mutex)),
+
+		chRecv: make(chan struct{}),
+		chPkt:  make(chan Packet),
 	}
 }
 
-const AdhocCoId = "<adhoc>"
-
 type HostingEndpoint struct {
 	HoContext
-
-	coId string
-	poCo *conver // current posting conversation armed for receiving
 
 	// Should be set by implementer
 	netIdent              string
@@ -64,8 +79,15 @@ type HostingEndpoint struct {
 	// hosting mutex, all peer code landing activities should be sync-ed by this lock
 	muHo sync.Mutex
 
-	// used to pipe landed objects to receivers
-	chObj chan interface{}
+	// channel to signal begin and end of conversation by passing conversation ids,
+	// read by co_begin goro, written by co_begin/co_end landing
+	chCoID chan string
+	// hosting (passive) and posting (active) object receivers
+	hoRcvr, poRcvr chan interface{}
+
+	// used by CoSendXXX(), only be none nil after coBegin locked po's muSend
+	coPo  *PostingEndpoint
+	poCnd *sync.Cond
 
 	// channel to signal proceed of packet receiving
 	chRecv chan struct{}
@@ -80,8 +102,38 @@ func (ho *HostingEndpoint) HoCtx() HoContext {
 	return ho.HoContext
 }
 
-func (ho *HostingEndpoint) CoId() string {
-	return ho.coId
+func (ho *HostingEndpoint) CoPo() Posting {
+	coPo := ho.coPo
+	if coPo != nil {
+		return coPo
+	}
+	ho.poCnd.L.Lock()
+	defer ho.poCnd.L.Unlock()
+	for {
+		coPo = ho.coPo
+		if coPo == nil {
+			ho.poCnd.Wait()
+			continue
+		}
+		return coPo
+	}
+}
+
+func (ho *HostingEndpoint) CoSendCode(code string) (err error) {
+	po := ho.CoPo().(*PostingEndpoint)
+	_, err = po.sendPacket(code, "")
+	return
+}
+
+func (ho *HostingEndpoint) CoSendData(data <-chan []byte) (err error) {
+	po := ho.CoPo().(*PostingEndpoint)
+	_, err = po.sendData(data)
+	return
+}
+
+func (ho *HostingEndpoint) CoSendBSON(o interface{}, hint string) error {
+	po := ho.CoPo().(*PostingEndpoint)
+	return po.sendBSON(o, hint)
 }
 
 func (ho *HostingEndpoint) NetIdent() string {
@@ -111,7 +163,7 @@ func (ho *HostingEndpoint) PlugWire(
 }
 
 func (ho *HostingEndpoint) CoRecvObj() (result interface{}, err error) {
-	if ho.coId == "" {
+	if ho.hoRcvr == nil {
 		panic(errors.NewUsageError("CoRecvObj called without conversation ?!"))
 	}
 
@@ -131,9 +183,14 @@ func (ho *HostingEndpoint) recvObj() (interface{}, error) {
 		// fall through
 	}
 
+	if ho.hoRcvr == nil {
+		return nil, errors.NewUsageError("Receive is not possible in this case.")
+	}
+	chObj := ho.hoRcvr
+
 	// block to receive
 	select {
-	case result := <-ho.chObj:
+	case result := <-chObj:
 		// most normal case, got result
 		return result, nil
 	case <-ho.Done():
@@ -144,7 +201,7 @@ func (ho *HostingEndpoint) recvObj() (interface{}, error) {
 		}
 		// disconnected normally, give a second chance to receive an object
 		select {
-		case result := <-ho.chObj:
+		case result := <-chObj:
 			return result, nil
 		case <-time.After(1 * time.Millisecond):
 			return nil, errors.New("Wire already disconnected.")
@@ -153,7 +210,7 @@ func (ho *HostingEndpoint) recvObj() (interface{}, error) {
 }
 
 func (ho *HostingEndpoint) CoRecvData(data <-chan []byte) (err error) {
-	if ho.coId == "" {
+	if ho.hoRcvr == nil {
 		panic(errors.NewUsageError("CoRecvData called without conversation ?!"))
 	}
 
@@ -186,7 +243,7 @@ func (ho *HostingEndpoint) recvBSON(nBytes int, booter interface{}) (interface{}
 
 func (ho *HostingEndpoint) StartLandingLoops() {
 
-	// start 1 goro running packet receiving loop
+	// packet receiving loop
 	go func() {
 		defer func() {
 			// disconnect wire, don't crash the whole process
@@ -260,8 +317,85 @@ func (ho *HostingEndpoint) StartLandingLoops() {
 		}
 	}()
 
+	// muSend locker loop for hosting conversations
+	go func() {
+		defer func() {
+			// disconnect wire, don't crash the whole process
+			if err := recover(); err != nil {
+				e := errors.RichError(err)
+				glog.Errorf("HBI unexpected muSend locker error: %+v", e)
+				ho.Cancel(e)
+			}
+		}()
+
+		po := ho.PoToPeer().(*PostingEndpoint)
+		var coID string
+		for {
+			// co id to begin
+			select {
+			case <-ho.Done():
+				// got disconnected
+				return
+			case coID = <-ho.chCoID:
+			}
+
+			func() { // hold send mutex and maintain chObj during this passive conversation
+				po.muSend.Lock()
+				defer po.muSend.Unlock()
+
+				if _, err := po.sendPacket(coID, "co_ack_begin"); err != nil {
+					panic(err)
+				}
+
+				func() {
+					ho.muHo.Lock()
+					defer ho.muHo.Unlock()
+
+					ho.poCnd.L.Lock()
+					defer ho.poCnd.L.Unlock()
+					ho.coPo = po
+					ho.poCnd.Broadcast()
+				}()
+
+				// block until conversation ended
+				coID2End, ok := <-ho.chCoID
+				if !ok {
+					panic(errors.NewWireError("Co id channel closed ?!"))
+				}
+				if coID2End != coID {
+					panic(errors.Errorf("Ended different co id ?! [%s] vs [%s]", coID2End, coID))
+				}
+
+				func() {
+					ho.muHo.Lock()
+					defer ho.muHo.Unlock()
+
+					if ho.coPo != po {
+						panic(errors.NewWireError("ho.coPo changed ?!"))
+					}
+					ho.coPo = nil
+				}()
+
+				if _, err := po.sendPacket(coID, "co_ack_end"); err != nil {
+					panic(err)
+				}
+
+			}()
+
+		}
+	}()
+
 	// landing loop, land packets handed over from packet receiving loop
 	go func() {
+		defer func() {
+			// disconnect wire, don't crash the whole process
+			if err := recover(); err != nil {
+				e := errors.RichError(err)
+				glog.Errorf("HBI unexpected landing error: %+v", e)
+				ho.Cancel(e)
+			}
+		}()
+
 		for {
 
 			select {
@@ -279,12 +413,17 @@ func (ho *HostingEndpoint) StartLandingLoops() {
 				}
 				// pump result to receivers
 				if len(gotObjs) > 0 {
+					var chObj chan interface{}
+					// posting (active) receiver is considered backlog if a hosting (passive) receiver is set
+					if ho.hoRcvr != nil {
+						chObj = ho.hoRcvr
+					} else if ho.poRcvr != nil {
+						chObj = ho.poRcvr
+					} else {
+						panic(errors.NewWireError("No receiver for landed objects."))
+					}
 					for _, o := range gotObjs {
-						if ho.poCo == nil {
-							ho.chObj <- o
-						} else {
-							ho.poCo.chObj <- o
-						}
+						chObj <- o
 					}
 				}
 
@@ -300,9 +439,6 @@ func (ho *HostingEndpoint) StartLandingLoops() {
 
 // return data object(s) to be sent to chObj, by landing the specified packet
 func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error) {
-	ho.muHo.Lock()
-	defer ho.muHo.Unlock()
-
 	defer func() {
 		// disconnect wire, don't crash the whole process
 		if e := recover(); e != nil {
@@ -314,8 +450,18 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 		}
 	}()
 
+	var afterHoUnLock []func()
+	defer func() {
+		for _, f := range afterHoUnLock {
+			f()
+		}
+	}()
+
+	ho.muHo.Lock()
+	defer ho.muHo.Unlock()
+
 	if strings.HasPrefix(pkt.WireDir, "coget:") {
-		if ho.coId == "" {
+		if ho.hoRcvr == nil {
 			panic(errors.NewWireError("coget without conversation ?!"))
 		}
 		result, ok, err := ho.Exec(pkt.Payload)
@@ -359,7 +505,7 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 			// panic to stop the loop, will be logged by deferred err handler above
 			panic(errors.NewPacketError(err, pkt))
 		} else if ok {
-			if ho.coId != "" {
+			if ho.hoRcvr != nil || ho.poRcvr != nil {
 				// in conversation, send it via chObj to a pending CoRecvObj() call
 				return []interface{}{result}, nil
 			} else {
@@ -368,88 +514,84 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 		} else {
 			// no result from execution, nop
 		}
+
 	case "corun":
-		if ho.coId == "" {
-			// start an ad-hoc conversation if none present atm
-			ho.coId = AdhocCoId
-		}
 		if err = ho.CoExec(pkt.Payload); err != nil {
 			panic(errors.NewPacketError(err, pkt))
 		}
+
 	case "co_begin":
-		switch p2p := ho.PoToPeer(); po := p2p.(type) {
-		case *PostingEndpoint:
-			go func() { // ack co begin at next send opportunity
-				po.muSend.Lock()
-				defer po.muSend.Unlock()
-				ho.muHo.Lock()
-				defer ho.muHo.Unlock()
-				if ho.coId != "" {
-					panic(errors.NewPacketError(fmt.Sprintf(
-						"Unexpected co_begin [%s]=>[%s]", ho.coId, pkt.Payload,
-					), pkt))
-				}
-				ho.coId = pkt.Payload
-				if _, err := po.sendPacket(pkt.Payload, "co_ack"); err != nil {
-					panic(err)
-				}
-			}()
-		case nil:
-			ho.coId = pkt.Payload
-		default:
-			panic(errors.NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
+		coID := pkt.Payload
+
+		if glog.V(3) {
+			glog.Infof("Beginning hosting conversation [%s] ...", coID)
 		}
+
+		if ho.hoRcvr != nil {
+			panic(errors.NewWireError("Receiver not clean from previous hosting conversation ?!"))
+		}
+		// allocate a receiving channel and set as current hosting (passive) conversation object receiver
+		chObj := make(chan interface{})
+		ho.hoRcvr = chObj
+
+		// signal co begin to muSend locker goro, after hosting mutex unlocked to avoid deadlock
+		afterHoUnLock = append(afterHoUnLock, func() {
+			ho.chCoID <- coID
+		})
+
 	case "co_end":
-		switch p2p := ho.PoToPeer(); po := p2p.(type) {
-		case *PostingEndpoint:
-			go func() { // ack co end at next send opportunity
-				po.muSend.Lock()
-				defer po.muSend.Unlock()
-				ho.muHo.Lock()
-				defer ho.muHo.Unlock()
-				if pkt.Payload != ho.CoId() {
-					panic(errors.NewPacketError(fmt.Sprintf(
-						"Unexpected co_end [%s]!=[%s]", pkt.Payload, ho.coId,
-					), pkt))
-				}
-				ho.coId = ""
-				if _, err := po.sendPacket("", "co_ack"); err != nil {
-					panic(err)
-				}
-			}()
-		case nil:
-			ho.coId = ""
-		default:
-			panic(errors.NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
+		coID := pkt.Payload
+		if glog.V(3) {
+			glog.Infof("Ending hosting conversation [%s] ...", coID)
 		}
-	case "co_ack": // todo necessary to split co_ack into co_ack_begin+co_ack_end ?
+		ho.hoRcvr = nil
+
+		// signal co end to muSend locker goro, after hosting mutex unlocked to avoid deadlock
+		afterHoUnLock = append(afterHoUnLock, func() {
+			ho.chCoID <- coID
+		})
+
+	case "co_ack_begin":
+		// ack to co_begin
 		switch p2p := ho.PoToPeer(); p2p.(type) {
 		case *PostingEndpoint:
+			coID := pkt.Payload
 			po := p2p.(*PostingEndpoint)
-			if pkt.Payload != "" {
-				// ack to co_begin
-				if po.co != nil && po.co.id == pkt.Payload {
-					// current posting conversation matched ack'ed co id,
-					// set as receiving conversation
-					ho.poCo = po.co
-				} else {
-					// the corresponding local posting conversation has already finished without
-					// blocking recv, in this case the next packet right away should be an empty co_ack
-					// todo detect & report violating cases
-				}
-				// set local hosting co id
-				ho.coId = pkt.Payload
+			if po.co != nil && po.co.id == coID {
+				// current posting conversation matched ack'ed co id,
+				// set its object receiving channel as posting (active) receiver
+				ho.poRcvr = po.co.chObj
 			} else {
-				// ack to co_end
-				// clear local hosting co id and receiving conversation
-				ho.coId = ""
-				ho.poCo = nil
+				// the corresponding local posting conversation has already finished without
+				// blocking recv, in this case the next packet right away should be an empty co_ack
+				// todo detect & report violating cases
 			}
 		case nil:
-			ho.coId = pkt.Payload
+			panic(errors.NewUsageError("Acking co to no posting endpoint ?!"))
 		default:
 			panic(errors.NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
 		}
+
+	case "co_ack_end":
+		// ack to co_end
+		switch p2p := ho.PoToPeer(); p2p.(type) {
+		case *PostingEndpoint:
+			coID := pkt.Payload
+			po := p2p.(*PostingEndpoint)
+			if po.co != nil && po.co.id == coID {
+				// current posting conversation matched ack'ed co id,
+				// verify its object receiving channel is current posting (active) receiver and clear
+				if ho.poRcvr != po.co.chObj {
+					panic(errors.NewWireError("Posting co's object receiving channel not on receiver stack top ?!"))
+				}
+				ho.poRcvr = nil
+			}
+		case nil:
+			panic(errors.NewUsageError("Acking co to no posting endpoint ?!"))
+		default:
+			panic(errors.NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
+		}
+
 	case "err":
 		// peer error occurred, todo give context package opportunity to handle peer error
 		err = errors.Errorf("HBI wire %s disconnecting due to peer error:\n%s",

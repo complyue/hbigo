@@ -145,37 +145,10 @@ func PrepareHosting(ctx HoContext) {
 	// so as part of the corun landing procedure, a new goro has to be started
 	// by eval `go corun(...)` against interpreter from the landing loop.
 	hc.put("corun", func(coro func()) {
-		ho := hc.Ho().(*HostingEndpoint)
-		po := hc.PoToPeer().(*PostingEndpoint)
-
-		func() { // check co id
-			ho.muHo.Lock()
-			defer ho.muHo.Unlock()
-
-			if ho.coId == "" {
-				panic(errors.Errorf("corun without co id?"))
-			}
-		}()
-
-		defer func() {
-			// po.CoSendXXX() may optionally lock muSend (and set coLock),
-			// unlock it anyway when coming back from coro
-			if coLock := po.coLock; coLock != nil {
-				po.coLock = nil
-				coLock.Unlock()
-			}
-		}()
+		// ho := hc.Ho().(*HostingEndpoint)
+		// po := hc.PoToPeer().(*PostingEndpoint)
 
 		coro() // this is interpreter parsed code to be co-run
-
-		func() { // clean co id
-			ho.muHo.Lock()
-			defer ho.muHo.Unlock()
-
-			if ho.coId == AdhocCoId { // close the conversation if it is ad-hoc
-				ho.coId = ""
-			}
-		}()
 
 	})
 
@@ -184,7 +157,7 @@ func PrepareHosting(ctx HoContext) {
 	// at peer hosting env to work
 	hc.put("recvBSON", func(nBytes int, booter interface{}) interface{} {
 		ho := hc.Ho().(*HostingEndpoint)
-		if ho.coId == "" {
+		if ho.hoRcvr == nil && ho.poRcvr == nil {
 			panic(errors.NewUsageError("recvBSON called without conversation ?!"))
 		}
 		o, err := ho.recvBSON(nBytes, booter)

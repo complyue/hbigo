@@ -35,21 +35,6 @@ type Posting interface {
 	// the hosting endpoint
 	Ho() Hosting
 
-	// send code to the remote conversation.
-	// must be in a passive local conversation responding to the remote conversation.
-	CoSendCode(code string) (err error)
-
-	// send a bson object, which may be a map or a struct value, to remote conversation.
-	// must be in a passive local conversation responding to the remote conversation.
-	// the `hint` string can be empty for remote to receive a `bson.M`,
-	// or it must be a valid Go expression evaluates to a map, or a pointer to a struct,
-	// whose type is either unnamed, or must be available within remote hosting context.
-	CoSendBSON(o interface{}, hint string) error
-
-	// send a binary data stream to remote conversation.
-	// must be in a passive local conversation responding to the remote conversation.
-	CoSendData(<-chan []byte) (err error)
-
 	// initiate a local conversation
 	// a conversation will hog the underlying posting wire until closed,
 	// during which course other traffics, including notifications and other conversations will queue up.
@@ -79,10 +64,6 @@ type PostingEndpoint struct {
 	ho *HostingEndpoint
 
 	muSend sync.Mutex
-
-	// points to muSend if locked that for sending from a passive conversation,
-	// or should be nil
-	coLock *sync.Mutex
 
 	co *conver
 }
@@ -182,47 +163,6 @@ func (po *PostingEndpoint) Ho() Hosting {
 	return po.ho
 }
 
-func (po *PostingEndpoint) CoSendCode(code string) (err error) {
-	if po.ho.coId == "" {
-		panic(errors.NewUsageError("CoSend without hosting conversation ?!"))
-	}
-
-	if po.coLock == nil {
-		po.muSend.Lock()
-		po.coLock = &po.muSend
-	}
-
-	_, err = po.sendPacket(code, "")
-	return
-}
-
-func (po *PostingEndpoint) CoSendData(data <-chan []byte) (err error) {
-	if po.ho.coId == "" {
-		panic(errors.NewUsageError("CoSend without hosting conversation ?!"))
-	}
-
-	if po.coLock == nil {
-		po.muSend.Lock()
-		po.coLock = &po.muSend
-	}
-
-	_, err = po.sendData(data)
-	return
-}
-
-func (po *PostingEndpoint) CoSendBSON(o interface{}, hint string) error {
-	if po.ho.coId == "" {
-		panic(errors.NewUsageError("CoSendBSON without hosting conversation ?!"))
-	}
-
-	if po.coLock == nil {
-		po.muSend.Lock()
-		po.coLock = &po.muSend
-	}
-
-	return po.sendBSON(o, hint)
-}
-
 func (po *PostingEndpoint) sendBSON(o interface{}, hint string) error {
 	if hint == "" {
 		// empty hint leads to invalid syntax, convert to literal untyped nil for no hint,
@@ -317,16 +257,16 @@ func (po *PostingEndpoint) Cancel(err error) {
 	}()
 
 	if err != nil { // try send full error info to peer before closer
-		if po.ho != nil && po.ho.coId != "" {
-			// in a hosting conversation,
-			// muSend should have been locked in this case
-		} else if po.co != nil {
+		if po.co != nil {
 			// in a posting conversation,
 			// muSend should have been locked in this case
+		} else if po.ho != nil && po.ho.hoRcvr != nil {
+			// in a hosting conversation,
+			// muSend should have been locked in this case
 		} else {
-			// todo other cases may deadlock?
-			po.muSend.Lock()
-			defer po.muSend.Unlock()
+			// todo other cases, may deadlock?
+			// po.muSend.Lock()
+			// defer po.muSend.Unlock()
 		}
 		// don't care possible error
 		_, _ = po.sendPacket(fmt.Sprintf("%+v", errors.RichError(err)), "err")

@@ -16,15 +16,12 @@ import (
 )
 
 func init() {
-	var err error
-
 	// change glog default destination to stderr
 	if glog.V(0) { // should always be true, mention glog so it defines its flags before we change them
-		if err = flag.CommandLine.Set("logtostderr", "true"); nil != err {
-			log.Printf("Failed changing glog default desitination, err: %s", err)
+		if err := flag.CommandLine.Set("logtostderr", "true"); nil != err {
+			log.Printf("Failed changing glog default desitination, err: %+v", err)
 		}
 	}
-
 }
 
 var (

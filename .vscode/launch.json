@@ -2,13 +2,40 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Test Mux Client - single threaded",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "env": {
+        "GOMAXPROCS": "1"
+      },
+      "program": "${workspaceFolder}/test/mux/client",
+      "args": [
+        "-v=3"
+      ]
+    },
+    {
+      "name": "Test Mux Server - single threaded",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "env": {
+        "GOMAXPROCS": "1"
+      },
+      "program": "${workspaceFolder}/test/mux/server",
+      "args": [
+        "-v=3"
+      ]
+    },
+    {
       "name": "Test Mux Client Pressure",
       "type": "go",
       "request": "launch",
       "mode": "debug",
       "program": "${workspaceFolder}/test/mux/client",
       "args": [
-        "-v=3", "-i=1"
+        "-v=3",
+        "-i=1"
       ]
     },
     {

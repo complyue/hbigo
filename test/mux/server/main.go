@@ -16,7 +16,7 @@ type Watchable struct {
 }
 
 func (w *Watchable) Watch(interval int) {
-	glog.Infof("Events are to be happening at %0.3f Hz.", float64(1000.0/float64(interval)))
+	glog.Infof("Events are to be happening at %0.1f Hz.", float64(1000.0/float64(interval)))
 
 	p2p := w.Ho().PoToPeer()
 	go func() {
@@ -50,7 +50,7 @@ func (w *Watchable) Echo() {
 		panic(err)
 	}
 	glog.V(1).Infof("Sending object [%#v] back...\n", obj)
-	w.PoToPeer().CoSendBSON(obj, "&Evt{}")
+	w.Ho().CoSendBSON(obj, "&Evt{}")
 }
 
 func main() {
