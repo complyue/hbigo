@@ -468,7 +468,7 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 		if err != nil {
 			panic(err)
 		} else if !ok {
-			panic(errors.NewPacketError("coget code exec to void ?!", pkt))
+			panic(errors.NewPacketError("coget code exec to void ?!", ho.netIdent, pkt))
 		}
 		serialization := pkt.WireDir[6:]
 		switch p2p := ho.PoToPeer(); po := p2p.(type) {
@@ -488,10 +488,10 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 			} else {
 				panic(errors.NewPacketError(fmt.Sprintf(
 					"unsupported coget serialization: %+v", serialization,
-				), pkt))
+				), ho.netIdent, pkt))
 			}
 		case nil:
-			panic(errors.NewPacketError("coget via unidirectional wire ?!", pkt))
+			panic(errors.NewPacketError("coget via unidirectional wire ?!", ho.netIdent, pkt))
 		default:
 			panic(errors.NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
 		}
@@ -503,7 +503,7 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 	case "":
 		if result, ok, err := ho.Exec(pkt.Payload); err != nil {
 			// panic to stop the loop, will be logged by deferred err handler above
-			panic(errors.NewPacketError(err, pkt))
+			panic(errors.NewPacketError(err, ho.netIdent, pkt))
 		} else if ok {
 			if ho.hoRcvr != nil || ho.poRcvr != nil {
 				// in conversation, send it via chObj to a pending CoRecvObj() call
@@ -517,7 +517,7 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 
 	case "corun":
 		if err = ho.CoExec(pkt.Payload); err != nil {
-			panic(errors.NewPacketError(err, pkt))
+			panic(errors.NewPacketError(err, ho.netIdent, pkt))
 		}
 
 	case "co_begin":
@@ -600,7 +600,7 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 		ho.Close()
 		return nil, err
 	default:
-		panic(errors.NewPacketError("Unexpected packet", pkt))
+		panic(errors.NewPacketError("Unexpected packet", ho.netIdent, pkt))
 	}
 
 	return nil, nil

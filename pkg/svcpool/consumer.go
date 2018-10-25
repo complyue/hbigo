@@ -2,8 +2,10 @@ package svcpool
 
 import (
 	"fmt"
-	"github.com/complyue/hbigo"
+	"strings"
 	"sync"
+
+	"github.com/complyue/hbigo"
 )
 
 func NewConsumer(
@@ -132,6 +134,16 @@ AssignProc(%#v,%#v)
 		return "", nil
 	} else {
 		procAddr := addrStr.(string)
+
+		// detect special case for solo services, return pool address if port is the same.
+		// this is to support port mapped addresses instead of direct IP reachability
+		if colonPos := strings.LastIndex(procAddr, ":"); colonPos > 0 {
+			port := procAddr[colonPos:]
+			if strings.HasSuffix(consumer.PoolAddr, port) {
+				return consumer.PoolAddr, nil
+			}
+		}
+
 		return procAddr, nil
 	}
 }

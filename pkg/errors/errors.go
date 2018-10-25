@@ -2,8 +2,9 @@ package errors
 
 import (
 	"fmt"
-	"github.com/pkg/errors"
 	"io"
+
+	"github.com/pkg/errors"
 )
 
 var (
@@ -34,17 +35,19 @@ func RichError(err interface{}) error {
 	}
 }
 
-func NewPacketError(errOmsg interface{}, pkt struct{ WireDir, Payload string }) *PacketError {
+func NewPacketError(errOmsg interface{}, wireIdent string, pkt struct{ WireDir, Payload string }) *PacketError {
 	switch e := errOmsg.(type) {
 	case richError:
-		return &PacketError{e, pkt}
+		return &PacketError{e, wireIdent, pkt}
 	default:
-		return &PacketError{RichError(e).(richError), pkt}
+		return &PacketError{RichError(e).(richError), wireIdent, pkt}
 	}
 }
 
 type PacketError struct {
 	richError
+
+	wireIdent string
 
 	pkt struct {
 		WireDir string
@@ -53,6 +56,9 @@ type PacketError struct {
 }
 
 func (pe *PacketError) Format(s fmt.State, verb rune) {
+	io.WriteString(s, "HBI packet error over wire ")
+	io.WriteString(s, pe.wireIdent)
+	io.WriteString(s, "\n")
 	pe.richError.Format(s, verb)
 	switch verb {
 	case 'v':
