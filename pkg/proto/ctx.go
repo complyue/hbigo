@@ -2,10 +2,11 @@ package proto
 
 import (
 	"fmt"
+	"reflect"
+
 	"github.com/complyue/hbigo/pkg/errors"
 	. "github.com/complyue/hbigo/pkg/util"
 	"github.com/cosmos72/gomacro/fast"
-	"reflect"
 )
 
 /*
@@ -90,6 +91,16 @@ func (ctx *hoContext) SetHo(ho Hosting) {
 func (ctx *hoContext) PoToPeer() Posting {
 	ctx.RLock()
 	defer ctx.RUnlock()
+	if ctx.po == nil {
+		if ctx.Cancelled() {
+			err := ctx.Err()
+			if err != nil {
+				// propagate connection errors
+				panic(err)
+			}
+		}
+		panic(errors.NewUsageError("No posting endpoint available."))
+	}
 	return ctx.po
 }
 
