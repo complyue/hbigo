@@ -164,6 +164,13 @@ func (po *PostingEndpoint) Ho() Hosting {
 }
 
 func (po *PostingEndpoint) sendBSON(o interface{}, hint string) error {
+	var scriptBytes, dataBytes int64
+	var err error
+	if glog.V(3) {
+		defer func() {
+			glog.Infof("Wire %s sent bson of %d+%d bytes, err=%v.", po.netIdent, scriptBytes, dataBytes, err)
+		}()
+	}
 	if hint == "" {
 		// empty hint leads to invalid syntax, convert to literal untyped nil for no hint,
 		// and peer will receive a map[string]interface{}
@@ -171,7 +178,7 @@ func (po *PostingEndpoint) sendBSON(o interface{}, hint string) error {
 	}
 
 	if o == nil { // short circuit logic
-		_, err := po.sendPacket(fmt.Sprintf(`
+		scriptBytes, err = po.sendPacket(fmt.Sprintf(`
 recvBSON(0,%s)
 `, hint), "")
 		return err
@@ -184,12 +191,12 @@ recvBSON(0,%s)
 	bc := make(chan []byte, 1)
 	bc <- buf
 	close(bc)
-	if _, err = po.sendPacket(fmt.Sprintf(`
+	if scriptBytes, err = po.sendPacket(fmt.Sprintf(`
 recvBSON(%v,%s)
 `, len(buf), hint), ""); err != nil {
 		return err
 	}
-	if _, err := po.sendData(bc); err != nil {
+	if dataBytes, err = po.sendData(bc); err != nil {
 		return err
 	}
 	return nil
