@@ -34,7 +34,7 @@
       "mode": "debug",
       "program": "${workspaceFolder}/test/mux/client",
       "args": [
-        "-v=3",
+        "-v=1",
         "-i=1"
       ]
     },
