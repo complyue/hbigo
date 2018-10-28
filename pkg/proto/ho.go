@@ -19,18 +19,18 @@ type Hosting interface {
 
 	// send code to the remote conversation.
 	// must be in a passive local conversation responding to the remote conversation.
-	CoSendCode(code string) (err error)
+	CoSendCode(code string)
 
 	// send a bson object, which may be a map or a struct value, to remote conversation.
 	// must be in a passive local conversation responding to the remote conversation.
 	// the `hint` string can be empty for remote to receive a `bson.M`,
 	// or it must be a valid Go expression evaluates to a map, or a pointer to a struct,
 	// whose type is either unnamed, or must be available within remote hosting context.
-	CoSendBSON(o interface{}, hint string) error
+	CoSendBSON(o interface{}, hint string)
 
 	// send a binary data stream to remote conversation.
 	// must be in a passive local conversation responding to the remote conversation.
-	CoSendData(<-chan []byte) (err error)
+	CoSendData(<-chan []byte)
 
 	// identity from the network's view
 	NetIdent() string
@@ -47,19 +47,20 @@ type Hosting interface {
 	CoRecvData(data <-chan []byte) (err error)
 }
 
+type CoPoTask struct {
+	coID  string                    // hosting (passive) conversation id
+	entry func(po *PostingEndpoint) // closure to perform a posting task
+}
+
 func NewHostingEndpoint(ctx HoContext) *HostingEndpoint {
 	PrepareHosting(ctx)
 	return &HostingEndpoint{
 		HoContext: ctx,
 		netIdent:  "?!?",
 
-		chCoID: make(chan string, 2),
-		hoRcvr: nil,
-		poRcvr: nil,
-
-		// should be obtained in blocking manner by CoPo()
-		coPo:  nil,
-		poCnd: sync.NewCond(new(sync.Mutex)),
+		coPoQue: make(chan CoPoTask, 50), // todo fine tune this buffer size
+		hoRcvr:  nil,
+		poRcvr:  nil,
 
 		chRecv: make(chan struct{}),
 		chPkt:  make(chan Packet),
@@ -79,15 +80,13 @@ type HostingEndpoint struct {
 	// hosting mutex, all peer code landing activities should be sync-ed by this lock
 	muHo sync.Mutex
 
-	// channel to signal begin and end of conversation by passing conversation ids,
-	// read by co_begin goro, written by co_begin/co_end landing
-	chCoID chan string
-	// hosting (passive) and posting (active) object receivers
-	hoRcvr, poRcvr chan interface{}
-
-	// used by CoSendXXX(), only be none nil after coBegin locked po's muSend
-	coPo  *PostingEndpoint
-	poCnd *sync.Cond
+	// a queue of posting tasks yielded from hosting conversations, the tasks will be
+	// executed by posting loop
+	coPoQue chan CoPoTask
+	// the hosting (passive) object receiver
+	hoRcvr chan interface{}
+	// the posting (active) object receiver
+	poRcvr chan interface{}
 
 	// channel to signal proceed of packet receiving
 	chRecv chan struct{}
@@ -102,38 +101,28 @@ func (ho *HostingEndpoint) HoCtx() HoContext {
 	return ho.HoContext
 }
 
-func (ho *HostingEndpoint) CoPo() Posting {
-	coPo := ho.coPo
-	if coPo != nil {
-		return coPo
-	}
-	ho.poCnd.L.Lock()
-	defer ho.poCnd.L.Unlock()
-	for {
-		coPo = ho.coPo
-		if coPo == nil {
-			ho.poCnd.Wait()
-			continue
+func (ho *HostingEndpoint) CoSendCode(code string) {
+	ho.coPoQue <- CoPoTask{entry: func(po *PostingEndpoint) {
+		if _, err := po.sendPacket(code, ""); err != nil {
+			panic(err)
 		}
-		return coPo
-	}
+	}}
 }
 
-func (ho *HostingEndpoint) CoSendCode(code string) (err error) {
-	po := ho.CoPo().(*PostingEndpoint)
-	_, err = po.sendPacket(code, "")
-	return
+func (ho *HostingEndpoint) CoSendData(data <-chan []byte) {
+	ho.coPoQue <- CoPoTask{entry: func(po *PostingEndpoint) {
+		if _, err := po.sendData(data); err != nil {
+			panic(err)
+		}
+	}}
 }
 
-func (ho *HostingEndpoint) CoSendData(data <-chan []byte) (err error) {
-	po := ho.CoPo().(*PostingEndpoint)
-	_, err = po.sendData(data)
-	return
-}
-
-func (ho *HostingEndpoint) CoSendBSON(o interface{}, hint string) error {
-	po := ho.CoPo().(*PostingEndpoint)
-	return po.sendBSON(o, hint)
+func (ho *HostingEndpoint) CoSendBSON(o interface{}, hint string) {
+	ho.coPoQue <- CoPoTask{entry: func(po *PostingEndpoint) {
+		if err := po.sendBSON(o, hint); err != nil {
+			panic(err)
+		}
+	}}
 }
 
 func (ho *HostingEndpoint) NetIdent() string {
@@ -317,7 +306,7 @@ func (ho *HostingEndpoint) StartLandingLoops() {
 		}
 	}()
 
-	// muSend locker loop for hosting conversations
+	// posting loop for hosting conversations
 	go func() {
 		defer func() {
 			// disconnect wire, don't crash the whole process
@@ -328,60 +317,61 @@ func (ho *HostingEndpoint) StartLandingLoops() {
 			}
 		}()
 
-		po := ho.PoToPeer().(*PostingEndpoint)
 		var coID string
 		for {
-			// co id to begin
+			var poTask CoPoTask
+			// fetch next conversation posting task
 			select {
-			case <-ho.Done():
-				// got disconnected
+			case <-ho.Done(): // got disconnected
 				return
-			case coID = <-ho.chCoID:
+			case poTask = <-ho.coPoQue:
 			}
 
-			func() { // hold send mutex and maintain chObj during this passive conversation
+			if poTask.entry != nil {
+				panic(errors.NewWireError("Hosting conversation got task before co_begin ?!"))
+			}
+			if poTask.coID == "" {
+				panic(errors.NewWireError("Hosting conversation begin with empty co ID ?!"))
+			}
+			coID = poTask.coID
+
+			po := ho.PoToPeer().(*PostingEndpoint)
+			func() { // hold send mutex and maintain chObj during this hosting (passive) conversation
 				po.muSend.Lock()
 				defer po.muSend.Unlock()
 
 				if _, err := po.sendPacket(coID, "co_ack_begin"); err != nil {
 					panic(err)
 				}
-
-				func() {
-					ho.muHo.Lock()
-					defer ho.muHo.Unlock()
-
-					ho.poCnd.L.Lock()
-					defer ho.poCnd.L.Unlock()
-					ho.coPo = po
-					ho.poCnd.Broadcast()
-				}()
-
-				// block until conversation ended
-				coID2End, ok := <-ho.chCoID
-				if !ok {
-					panic(errors.NewWireError("Co id channel closed ?!"))
-				}
-				if coID2End != coID {
-					panic(errors.Errorf("Ended different co id ?! [%s] vs [%s]", coID2End, coID))
-				}
-
-				func() {
-					ho.muHo.Lock()
-					defer ho.muHo.Unlock()
-
-					if ho.coPo != po {
-						panic(errors.NewWireError("ho.coPo changed ?!"))
+				// execute posting tasks in the queue
+				for {
+					select {
+					case <-ho.Done(): // got disconnected
+						return
+					case poTask = <-ho.coPoQue:
 					}
-					ho.coPo = nil
-				}()
 
-				if _, err := po.sendPacket(coID, "co_ack_end"); err != nil {
-					panic(err)
+					if poTask.coID == "" { // got a posting task
+
+						poTask.entry(po)
+
+					} else { // got co_end
+
+						if poTask.coID != coID {
+							panic(errors.NewWireError(fmt.Sprintf("Conversation id mismatch [%s] vs [%s] ?!", poTask.coID, coID)))
+						}
+						if poTask.entry != nil {
+							panic(errors.NewWireError("Hosting conversation got task with co_end ?!"))
+						}
+						if _, err := po.sendPacket(coID, "co_ack_end"); err != nil {
+							panic(err)
+						}
+						coID = ""
+						return
+
+					}
 				}
-
 			}()
-
 		}
 	}()
 
@@ -483,27 +473,27 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 			panic(errors.NewPacketError("coget code exec to void ?!", ho.netIdent, pkt))
 		}
 		serialization := pkt.WireDir[6:]
-		go func() {
-			po := ho.CoPo().(*PostingEndpoint)
-
-			if len(serialization) <= 0 {
-				// simple value, no serialization,
-				// i.e. use native textual representation of hosting language
+		if len(serialization) <= 0 {
+			// simple value, no serialization,
+			// i.e. use native textual representation of hosting language
+			ho.coPoQue <- CoPoTask{entry: func(po *PostingEndpoint) {
 				if _, err := po.sendPacket(fmt.Sprintf("%#v", result), ""); err != nil {
 					panic(err)
 				}
-			} else if strings.HasPrefix(serialization, "bson:") {
-				// structured value, use hinted bson serialization
-				bsonHint := serialization[5:]
+			}}
+		} else if strings.HasPrefix(serialization, "bson:") {
+			// structured value, use hinted bson serialization
+			bsonHint := serialization[5:]
+			ho.coPoQue <- CoPoTask{entry: func(po *PostingEndpoint) {
 				if err := po.sendBSON(result, bsonHint); err != nil {
 					panic(err)
 				}
-			} else {
-				panic(errors.NewPacketError(fmt.Sprintf(
-					"unsupported coget serialization: %+v", serialization,
-				), ho.netIdent, pkt))
-			}
-		}()
+			}}
+		} else {
+			panic(errors.NewPacketError(fmt.Sprintf(
+				"unsupported coget serialization: %+v", serialization,
+			), ho.netIdent, pkt))
+		}
 		// done with coget, no other wireDir interpretations
 		return nil, nil
 	}
@@ -545,7 +535,7 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 
 		// signal co begin to muSend locker goro, after hosting mutex unlocked to avoid deadlock
 		afterHoUnLock = append(afterHoUnLock, func() {
-			ho.chCoID <- coID
+			ho.coPoQue <- CoPoTask{coID: coID}
 		})
 
 	case "co_end":
@@ -557,7 +547,7 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 
 		// signal co end to muSend locker goro, after hosting mutex unlocked to avoid deadlock
 		afterHoUnLock = append(afterHoUnLock, func() {
-			ho.chCoID <- coID
+			ho.coPoQue <- CoPoTask{coID: coID}
 		})
 
 	case "co_ack_begin":
@@ -566,12 +556,13 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 		case *PostingEndpoint:
 			coID := pkt.Payload
 			po := p2p.(*PostingEndpoint)
-			if po.co != nil && po.co.id == coID {
+			co := po.co
+			if co != nil && co.id == coID {
 				// current posting conversation matched ack'ed co id,
 				// set its object receiving channel as posting (active) receiver
-				ho.poRcvr = po.co.chObj
+				ho.poRcvr = co.chObj
 				if glog.V(3) {
-					glog.Infof("Posting conversation %s acked, receiver %p armed.", po.co.id, po.co.chObj)
+					glog.Infof("Posting conversation %s acked, receiver %p armed.", co.id, co.chObj)
 				}
 			} else {
 				// the corresponding local posting conversation has already finished without
