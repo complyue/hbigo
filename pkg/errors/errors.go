@@ -35,12 +35,12 @@ func RichError(err interface{}) error {
 	}
 }
 
-func NewPacketError(errOmsg interface{}, wireIdent string, pkt struct{ WireDir, Payload string }) *PacketError {
+func NewPacketError(errOmsg interface{}, wireIdent string, WireDir, Payload string) *PacketError {
 	switch e := errOmsg.(type) {
 	case richError:
-		return &PacketError{e, wireIdent, pkt}
+		return &PacketError{e, wireIdent, WireDir, Payload}
 	default:
-		return &PacketError{RichError(e).(richError), wireIdent, pkt}
+		return &PacketError{RichError(e).(richError), wireIdent, WireDir, Payload}
 	}
 }
 
@@ -49,10 +49,8 @@ type PacketError struct {
 
 	wireIdent string
 
-	pkt struct {
-		WireDir string
-		Payload string
-	}
+	WireDir string
+	Payload string
 }
 
 func (pe *PacketError) Format(s fmt.State, verb rune) {
@@ -64,9 +62,9 @@ func (pe *PacketError) Format(s fmt.State, verb rune) {
 	case 'v':
 		if s.Flag('+') {
 			io.WriteString(s, "\n**hbi[#")
-			io.WriteString(s, pe.pkt.WireDir)
+			io.WriteString(s, pe.WireDir)
 			io.WriteString(s, "]hbi**\n")
-			io.WriteString(s, pe.pkt.Payload)
+			io.WriteString(s, pe.Payload)
 			io.WriteString(s, "\n**hbi---hbi**\n")
 		}
 	}

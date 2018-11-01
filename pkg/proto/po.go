@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/complyue/hbigo/pkg/errors"
 	. "github.com/complyue/hbigo/pkg/util"
@@ -241,42 +242,53 @@ func (po *PostingEndpoint) coDone(co Conver) {
 }
 
 func (po *PostingEndpoint) Cancel(err error) {
+	// close-to-signal error sent to peer or no need to send
+	errSent := make(chan struct{})
+	var closer func() error
+
 	// make sure the done channel is closed anyway
-	defer po.CancellableContext.Cancel(err)
+	defer func() {
+		defer po.CancellableContext.Cancel(err)
+
+		select {
+		case <-errSent:
+			// error sent to peer
+		case <-time.After(5 * time.Second):
+			// timeout
+		case <-po.Done():
+			// done from other path ?
+		}
+
+		if closer != nil {
+			if e := closer(); e != nil {
+				glog.Warningf("Error when closing posting wire: %+v\n", errors.RichError(e))
+			}
+		}
+	}()
 
 	po.Lock()
 	defer po.Unlock()
 
-	closer := po.closer
+	closer = po.closer
 	if closer == nil {
 		// do close only once, if po.closer is nil, it's already closed
+		close(errSent)
 		return
 	}
 	po.closer = nil
-	// cut the wire at last anyway
-	defer func() {
-		if e := recover(); e != nil {
-			glog.Warningf("Error before closing posting wire: %+v\n", errors.RichError(e))
-		}
-		if e := closer(); e != nil {
-			glog.Warningf("Error when closing posting wire: %+v\n", errors.RichError(e))
-		}
-	}()
 
-	if err != nil { // try send full error info to peer before closer
-		if po.co != nil {
-			// in a posting conversation,
-			// muSend should have been locked in this case
-		} else if po.ho != nil && po.ho.hoRcvr != nil {
-			// in a hosting conversation,
-			// muSend should have been locked in this case
-		} else {
-			// todo other cases, may deadlock?
-			// po.muSend.Lock()
-			// defer po.muSend.Unlock()
-		}
-		// don't care possible error
-		_, _ = po.sendPacket(fmt.Sprintf("%+v", errors.RichError(err)), "err")
+	if err == nil { // no err to be sent
+		close(errSent)
+	} else { // try send full error info to peer before closer
+		go func() {
+			defer close(errSent)
+
+			po.muSend.Lock()
+			defer po.muSend.Unlock()
+
+			// don't care possible error
+			_, _ = po.sendPacket(fmt.Sprintf("%+v", errors.RichError(err)), "err")
+		}()
 	}
 
 	// make sure corun context cancelled as well

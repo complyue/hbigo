@@ -5,8 +5,6 @@ import (
 	"io"
 	"net"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/complyue/hbigo/pkg/errors"
 	"github.com/globalsign/mgo/bson"
@@ -59,11 +57,8 @@ func NewHostingEndpoint(ctx HoContext) *HostingEndpoint {
 		netIdent:  "?!?",
 
 		coPoQue: make(chan CoPoTask, 50), // todo fine tune this buffer size
-		hoRcvr:  nil,
-		poRcvr:  nil,
 
-		chRecv: make(chan struct{}),
-		chPkt:  make(chan Packet),
+		poRcvr: nil, //
 	}
 }
 
@@ -77,24 +72,12 @@ type HostingEndpoint struct {
 	recvData              func(data <-chan []byte) (n int64, err error)
 	closer                func() error
 
-	// hosting mutex, all peer code landing activities should be sync-ed by this lock
-	muHo sync.Mutex
-
 	// a queue of posting tasks yielded from hosting conversations, the tasks will be
 	// executed by posting loop
 	coPoQue chan CoPoTask
-	// the hosting (passive) object receiver
-	hoRcvr chan interface{}
-	// the posting (active) object receiver
+
+	// object receiving channel of the current ack'ed posting conversation
 	poRcvr chan interface{}
-
-	// channel to signal proceed of packet receiving
-	chRecv chan struct{}
-
-	// packet channel
-	chPkt chan Packet
-	// a packet contains just two strings,
-	// it's more optimal to pass value over channel
 }
 
 func (ho *HostingEndpoint) HoCtx() HoContext {
@@ -151,58 +134,15 @@ func (ho *HostingEndpoint) PlugWire(
 	ho.closer = closer
 }
 
-func (ho *HostingEndpoint) CoRecvObj() (result interface{}, err error) {
-	if ho.hoRcvr == nil {
-		panic(errors.NewUsageError("CoRecvObj called without conversation ?!"))
+func (ho *HostingEndpoint) CoRecvObj() (interface{}, error) {
+	result, ok, err := ho.landOne()
+	if !ok {
+		panic(errors.NewUsageError("Nothing sent over wire but an object expected."))
 	}
-
-	result, err = ho.recvObj()
-	return
-}
-
-func (ho *HostingEndpoint) recvObj() (interface{}, error) {
-	// err if already disconnected due to error
-	select {
-	case <-ho.Done():
-		err := ho.Err()
-		if err != nil {
-			return nil, errors.Wrapf(err, "Wire already disconnected due to error.")
-		}
-	default:
-		// fall through
-	}
-
-	if ho.hoRcvr == nil {
-		return nil, errors.NewUsageError("Receive is not possible in this case.")
-	}
-	chObj := ho.hoRcvr
-
-	// block to receive
-	select {
-	case result := <-chObj:
-		// most normal case, got result
-		return result, nil
-	case <-ho.Done():
-		// disconnected
-		if err := ho.Err(); err != nil {
-			// disconnected due to error, propagate the error
-			return nil, errors.Wrapf(err, "Wire already disconnected due to error.")
-		}
-		// disconnected normally, give a second chance to receive an object
-		select {
-		case result := <-chObj:
-			return result, nil
-		case <-time.After(1 * time.Millisecond):
-			return nil, errors.New("Wire already disconnected.")
-		}
-	}
+	return result, err
 }
 
 func (ho *HostingEndpoint) CoRecvData(data <-chan []byte) (err error) {
-	if ho.hoRcvr == nil {
-		panic(errors.NewUsageError("CoRecvData called without conversation ?!"))
-	}
-
 	_, err = ho.recvData(data)
 	return
 }
@@ -232,92 +172,19 @@ func (ho *HostingEndpoint) recvBSON(nBytes int, booter interface{}) (interface{}
 
 func (ho *HostingEndpoint) StartLandingLoops() {
 
-	// packet receiving loop
-	go func() {
-		defer func() {
-			// disconnect wire, don't crash the whole process
-			if err := recover(); err != nil {
-				e := errors.RichError(err)
-				glog.Errorf("HBI receiving error: %+v", e)
-				ho.Cancel(e)
-			}
-		}()
-
-		for {
-			if ho.Cancelled() {
-				// connection context cancelled
-				glog.V(1).Infof(
-					"HBI wire %s receiving stopped err=%#v",
-					ho.NetIdent(), ho.Err(),
-				)
-				return
-			}
-
-			// blocking read next packet
-			if glog.V(3) {
-				glog.Infof("HBI wire %+v receiving next packet ...", ho.netIdent)
-			}
-
-			// reset receive proceeding state before receiving a packet, it'll be set  by the
-			// landing loop, after next received packet handed over to it, and it did the landing.
-			//ho.pendNextRecv()
-
-			pkt, err := ho.recvPacket()
-			if err != nil {
-				if err == io.EOF {
-					// live with EOF by far, pkt may be nil or not in this case
-				} else {
-					// treat receiving error as fatal, and fully disconnect (i.e.
-					// cancel the connection context at all)
-					ho.Cancel(err)
-					return
-				}
-			}
-			if pkt != nil {
-				// blocking put packet for landing
-				if glog.V(3) {
-					glog.Infof("HBI wire %+v handing over packet: ...\n%+v\n", ho.netIdent, pkt)
-				}
-				ho.chPkt <- *pkt
-				if glog.V(3) {
-					glog.Infof("HBI wire %+v handed over packet:\n%+v\n",
-						ho.netIdent, pkt)
-				}
-				pkt = nil // eager release mem
-			} else {
-				// mostly the tcp connection has been disconnected,
-				glog.V(1).Infof("HBI peer %s disconnected.", ho.netIdent)
-				// clear closer to avoid closing the disconnected socket. todo will here something leaked ?
-				ho.closer = nil
-				// do close so the posting endpoint if present, get closed
-				ho.Close()
-
-				// done for now
-				return
-				// todo do not return when auto-re-connect is implemented, in which case continue here,
-				// expecting a proceed signal on chProc after auto-re-connected,
-				// then we will be receiving next packet from the new tcp socket.
-			}
-
-			// wait proceeding signal before attempt to receive next packet,
-			// as landing of the packet may start receiving of streaming binary data,
-			// in which case we should let recvData() be called before next packet recv here
-			<-ho.chRecv
-		}
-	}()
-
 	// posting loop for hosting conversations
 	go func() {
+		var coID string
+
 		defer func() {
 			// disconnect wire, don't crash the whole process
 			if err := recover(); err != nil {
 				e := errors.RichError(err)
-				glog.Errorf("HBI unexpected muSend locker error: %+v", e)
+				glog.Errorf("HBI unexpected error in posting from conversation [%s]: %+v", coID, e)
 				ho.Cancel(e)
 			}
 		}()
 
-		var coID string
 		for {
 			var poTask CoPoTask
 			// fetch next conversation posting task
@@ -375,8 +242,9 @@ func (ho *HostingEndpoint) StartLandingLoops() {
 		}
 	}()
 
-	// landing loop, land packets handed over from packet receiving loop
+	// landing loop, drive receiving and landing of packets
 	go func() {
+
 		defer func() {
 			// disconnect wire, don't crash the whole process
 			if err := recover(); err != nil {
@@ -387,60 +255,35 @@ func (ho *HostingEndpoint) StartLandingLoops() {
 		}()
 
 		for {
-
 			select {
 			case <-ho.Done():
-				// got disconnected
 				return
-			case pkt := <-ho.chPkt:
-				// got next packet to land
-
-				// do land this packet
-				gotObjs, err := ho.landOne(pkt)
-				if err != nil {
-					// should have logged err & disconnected, stop goro here
-					return
-				}
-				// pump result to receivers
-				if len(gotObjs) > 0 {
-					var chObj chan interface{}
-					// posting (active) receiver is considered backlog if a hosting (passive) receiver is set
-					if ho.hoRcvr != nil {
-						chObj = ho.hoRcvr
-						if glog.V(3) {
-							glog.Infof("Giving landed %d object(s) to hosting receiver %p ...", len(gotObjs), chObj)
-						}
-					} else if ho.poRcvr != nil {
-						chObj = ho.poRcvr
-						if glog.V(3) {
-							glog.Infof("Giving landed %d object(s) to posting receiver %p ...", len(gotObjs), chObj)
-						}
-					} else {
-						panic(errors.NewWireError("No receiver for landed objects."))
-					}
-					for i, o := range gotObjs {
-						if glog.V(3) {
-							glog.Infof("Giving %d/%d object to receiver %p ...", i+1, len(gotObjs), chObj)
-						}
-						chObj <- o
-					}
-					if glog.V(3) {
-						glog.Infof("All landed %d object(s) given to receiver %p", len(gotObjs), chObj)
-					}
-				}
-
-				// signal next packet receiving
-				ho.chRecv <- struct{}{}
-
 			}
-
+			result, ok, err := ho.landOne()
+			if err != nil {
+				panic(err)
+			} else if ok && ho.poRcvr != nil {
+				select {
+				case <-ho.Done():
+					return
+				case ho.poRcvr <- result:
+					// object sent to posting conversation
+				}
+			}
 		}
+
 	}()
 
 }
 
-// return data object(s) to be sent to chObj, by landing the specified packet
-func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error) {
+// land next packet and return the result
+func (ho *HostingEndpoint) landOne() (gotObj interface{}, ok bool, err error) {
+	if ho.closer == nil {
+		// shortcut if hosting endpoint disconnected by peer detected previously
+		glog.Warningf("Landing attempted against a disconnected HBI wire %+v.", ho.netIdent)
+		return nil, false, nil
+	}
+
 	defer func() {
 		// disconnect wire, don't crash the whole process
 		if e := recover(); e != nil {
@@ -452,32 +295,56 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 		}
 	}()
 
-	var afterHoUnLock []func()
-	defer func() {
-		for _, f := range afterHoUnLock {
-			f()
+	// blocking read next packet
+	if glog.V(3) {
+		glog.Infof("HBI wire %+v receiving next packet ...", ho.netIdent)
+	}
+
+	var pkt *Packet
+	pkt, err = ho.recvPacket()
+	if err != nil {
+		if err == io.EOF {
+			// live with EOF by far, pkt may be nil or not in this case
+			err = nil
+		} else {
+			// treat receiving error as fatal, and fully disconnect (i.e.
+			// cancel the connection context at all)
+			ho.Cancel(err)
+			return nil, false, err
 		}
-	}()
+	}
+	if pkt == nil {
+		// mostly the tcp connection has been disconnected,
 
-	ho.muHo.Lock()
-	defer ho.muHo.Unlock()
+		glog.V(1).Infof("HBI peer %s disconnected.", ho.netIdent)
 
+		// clear closer to avoid closing the disconnected socket.
+		// todo will here something leaked ?
+		ho.closer = nil
+
+		// done with this wire
+		ho.Cancel(err)
+
+		return nil, false, err
+	}
+	if glog.V(3) {
+		glog.Infof("HBI wire %+v landing packet: ...\n%+v\n", ho.netIdent, pkt)
+	}
+
+	var execResult interface{}
 	if strings.HasPrefix(pkt.WireDir, "coget:") {
-		if ho.hoRcvr == nil {
-			panic(errors.NewWireError("coget without conversation ?!"))
-		}
-		result, ok, err := ho.Exec(pkt.Payload)
+		execResult, ok, err = ho.Exec(pkt.Payload)
 		if err != nil {
 			panic(err)
 		} else if !ok {
-			panic(errors.NewPacketError("coget code exec to void ?!", ho.netIdent, pkt))
+			panic(errors.NewPacketError("coget code exec to void ?!", ho.netIdent, pkt.WireDir, pkt.Payload))
 		}
 		serialization := pkt.WireDir[6:]
 		if len(serialization) <= 0 {
 			// simple value, no serialization,
 			// i.e. use native textual representation of hosting language
 			ho.coPoQue <- CoPoTask{entry: func(po *PostingEndpoint) {
-				if _, err := po.sendPacket(fmt.Sprintf("%#v", result), ""); err != nil {
+				if _, err = po.sendPacket(fmt.Sprintf("%#v", execResult), ""); err != nil {
 					panic(err)
 				}
 			}}
@@ -485,39 +352,31 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 			// structured value, use hinted bson serialization
 			bsonHint := serialization[5:]
 			ho.coPoQue <- CoPoTask{entry: func(po *PostingEndpoint) {
-				if err := po.sendBSON(result, bsonHint); err != nil {
+				if err := po.sendBSON(execResult, bsonHint); err != nil {
 					panic(err)
 				}
 			}}
 		} else {
 			panic(errors.NewPacketError(fmt.Sprintf(
 				"unsupported coget serialization: %+v", serialization,
-			), ho.netIdent, pkt))
+			), ho.netIdent, pkt.WireDir, pkt.Payload))
 		}
 		// done with coget, no other wireDir interpretations
-		return nil, nil
+		return nil, false, nil
 	}
 
 	switch pkt.WireDir {
 	case "":
-		if result, ok, err := ho.Exec(pkt.Payload); err != nil {
+		// Note: landOne() may be recursively called from the executed script
+		if execResult, ok, err = ho.Exec(pkt.Payload); err != nil {
 			// panic to stop the loop, will be logged by deferred err handler above
-			panic(errors.NewPacketError(err, ho.netIdent, pkt))
-		} else if ok {
-			if ho.hoRcvr != nil || ho.poRcvr != nil {
-				// in conversation, send it via chObj to a pending CoRecvObj() call
-				return []interface{}{result}, nil
-			} else {
-				// not in conversation, drop anyway, todo warn about it ?
-			}
+			panic(errors.NewPacketError(err, ho.netIdent, pkt.WireDir, pkt.Payload))
 		} else {
-			// no result from execution, nop
+			return execResult, ok, err
 		}
 
 	case "corun":
-		if err = ho.CoExec(pkt.Payload); err != nil {
-			panic(errors.NewPacketError(err, ho.netIdent, pkt))
-		}
+		panic(errors.New("Removed from protocol."))
 
 	case "co_begin":
 		coID := pkt.Payload
@@ -525,30 +384,16 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 		if glog.V(3) {
 			glog.Infof("Beginning hosting conversation [%s] ...", coID)
 		}
-
-		if ho.hoRcvr != nil {
-			panic(errors.NewWireError("Receiver not clean from previous hosting conversation ?!"))
-		}
-		// allocate a receiving channel and set as current hosting (passive) conversation object receiver
-		chObj := make(chan interface{})
-		ho.hoRcvr = chObj
-
-		// signal co begin to muSend locker goro, after hosting mutex unlocked to avoid deadlock
-		afterHoUnLock = append(afterHoUnLock, func() {
-			ho.coPoQue <- CoPoTask{coID: coID}
-		})
+		// queue beginning co id, after hosting mutex unlocked to avoid deadlock
+		ho.coPoQue <- CoPoTask{coID: coID}
 
 	case "co_end":
 		coID := pkt.Payload
 		if glog.V(3) {
 			glog.Infof("Ending hosting conversation [%s] ...", coID)
 		}
-		ho.hoRcvr = nil
-
-		// signal co end to muSend locker goro, after hosting mutex unlocked to avoid deadlock
-		afterHoUnLock = append(afterHoUnLock, func() {
-			ho.coPoQue <- CoPoTask{coID: coID}
-		})
+		// queue ending co id, after hosting mutex unlocked to avoid deadlock
+		ho.coPoQue <- CoPoTask{coID: coID}
 
 	case "co_ack_begin":
 		// ack to co_begin
@@ -601,12 +446,12 @@ func (ho *HostingEndpoint) landOne(pkt Packet) (gotObjs []interface{}, err error
 			ho.netIdent, pkt.Payload)
 		glog.Error(err)
 		ho.Close()
-		return nil, err
+		return nil, false, err
 	default:
-		panic(errors.NewPacketError("Unexpected packet", ho.netIdent, pkt))
+		panic(errors.NewPacketError("Unexpected packet", ho.netIdent, pkt.WireDir, pkt.Payload))
 	}
 
-	return nil, nil
+	return nil, false, nil
 }
 
 func (ho *HostingEndpoint) Cancel(err error) {

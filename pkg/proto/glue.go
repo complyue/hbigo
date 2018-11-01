@@ -140,26 +140,11 @@ func PrepareHosting(ctx HoContext) {
 		}
 	})
 
-	// only the packet landing goroutine should eval against interpreter, it is
-	// bad for other goros of non-interpreted code to call interpreter's eval.
-	// so as part of the corun landing procedure, a new goro has to be started
-	// by eval `go corun(...)` against interpreter from the landing loop.
-	hc.put("corun", func(coro func()) {
-		// ho := hc.Ho().(*HostingEndpoint)
-		// po := hc.PoToPeer().(*PostingEndpoint)
-
-		coro() // this is interpreter parsed code to be co-run
-
-	})
-
 	// expose the bson receiver method, converting err-out to panic.
 	// note `(Co)SendBSON()` depends on availability of this method
 	// at peer hosting env to work
 	hc.put("recvBSON", func(nBytes int, booter interface{}) interface{} {
 		ho := hc.Ho().(*HostingEndpoint)
-		if ho.hoRcvr == nil && ho.poRcvr == nil {
-			panic(errors.NewUsageError("recvBSON called without conversation ?!"))
-		}
 		o, err := ho.recvBSON(nBytes, booter)
 		if err != nil {
 			glog.Error(errors.RichError(err))

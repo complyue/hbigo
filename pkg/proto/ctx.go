@@ -33,10 +33,8 @@ type HoContext interface {
 
 	// execute code sent by peer and return last value as result
 	Exec(code string) (result interface{}, ok bool, err error)
-	// execute code sent by peer with an conversation, and necessarily
-	// from a new goroutine. the code is expected to carry no value returning
-	// semantics
-	CoExec(code string) (err error)
+	// Start a new goroutine from the interpreter, running specified code
+	GoExec(code string) (err error)
 
 	// allow manipulation of contextual state objects
 	Put(key string, value interface{})
@@ -129,7 +127,7 @@ func (ctx *hoContext) Close() {
 	ctx.Cancel(nil)
 }
 
-// should only be called from packet landing goro, it's not properly sync-ed otherwise
+// calls to this method must be properly sync'ed against the interpreter
 func (ctx *hoContext) Exec(code string) (result interface{}, ok bool, err error) {
 	defer func() {
 		// gomacro Eval may panic, convert it to returned error here
@@ -158,8 +156,8 @@ func (ctx *hoContext) Exec(code string) (result interface{}, ok bool, err error)
 	return
 }
 
-// should only be called from packet landing goro, it's not properly sync-ed otherwise
-func (ctx *hoContext) CoExec(code string) (err error) {
+// calls to this method must be properly sync'ed against the interpreter
+func (ctx *hoContext) GoExec(code string) (err error) {
 	defer func() {
 		// gomacro Eval may panic, convert it to returned error here
 		if e := recover(); e != nil {
@@ -168,14 +166,14 @@ func (ctx *hoContext) CoExec(code string) (err error) {
 	}()
 
 	rvs, _ := ctx.interp.Eval(fmt.Sprintf(`
-go corun(func() {
+go func() {
 
 %s
 
-})
+}()
 `, code))
 	if len(rvs) != 0 {
-		err = errors.Errorf("Unexpected result from corun: %+v\n", rvs)
+		err = errors.Errorf("Unexpected result from GoExec: %+v\n", rvs)
 		return
 	}
 	return
