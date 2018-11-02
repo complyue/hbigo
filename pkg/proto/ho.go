@@ -258,6 +258,7 @@ func (ho *HostingEndpoint) StartLandingLoops() {
 			select {
 			case <-ho.Done():
 				return
+			default:
 			}
 			result, ok, err := ho.landOne()
 			if err != nil {
