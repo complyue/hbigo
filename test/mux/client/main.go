@@ -71,19 +71,23 @@ Watch(%d)
 			}
 			defer co.Close()
 
-			if err := co.SendCoRun("Echo()"); err != nil {
-				panic(err)
-			}
-			err = co.SendBSON(obj2Echo, "&Evt{}")
-			if err != nil {
-				panic(err)
-			}
-			o, err := co.RecvObj()
-			if err != nil {
-				panic(err)
-			}
-			if !reflect.DeepEqual(o, obj2Echo) {
-				panic(errors.Errorf("Echo mismatch: [%#v] vs [%#v]", o, obj2Echo))
+			for i := 0; i < 5; i++ {
+
+				if err := co.SendCode("Echo()"); err != nil {
+					panic(err)
+				}
+				err = co.SendBSON(obj2Echo, "&Evt{}")
+				if err != nil {
+					panic(err)
+				}
+				o, err := co.RecvObj()
+				if err != nil {
+					panic(err)
+				}
+				if !reflect.DeepEqual(o, obj2Echo) {
+					panic(errors.Errorf("Echo mismatch: [%#v] vs [%#v]", o, obj2Echo))
+				}
+
 			}
 			glog.Info("Echo worked just fine.")
 

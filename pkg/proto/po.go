@@ -31,7 +31,7 @@ type Posting interface {
 	NotifBSON(code string, o interface{}, hint string) error
 
 	// post a notification with a binary data stream to the peer
-	NotifCoRun(code string, data <-chan []byte) (err error)
+	NotifData(code string, data <-chan []byte) (err error)
 
 	// the hosting endpoint
 	Ho() Hosting
@@ -128,7 +128,7 @@ func (po *PostingEndpoint) NotifBSON(code string, o interface{}, hint string) (e
 		return err
 	}
 	defer co.Close()
-	if _, err = po.sendPacket(code, "corun"); err != nil {
+	if _, err = po.sendPacket(code, ""); err != nil {
 		return
 	}
 	if err = po.sendBSON(o, hint); err != nil {
@@ -137,7 +137,7 @@ func (po *PostingEndpoint) NotifBSON(code string, o interface{}, hint string) (e
 	return
 }
 
-func (po *PostingEndpoint) NotifCoRun(code string, data <-chan []byte) (err error) {
+func (po *PostingEndpoint) NotifData(code string, data <-chan []byte) (err error) {
 	defer func() {
 		if err != nil {
 			// in case sending error occurred, just log & close the wire
@@ -151,7 +151,7 @@ func (po *PostingEndpoint) NotifCoRun(code string, data <-chan []byte) (err erro
 		return err
 	}
 	defer co.Close()
-	if _, err = po.sendPacket(code, "corun"); err != nil {
+	if _, err = po.sendPacket(code, ""); err != nil {
 		return
 	}
 	if _, err = po.sendData(data); err != nil {

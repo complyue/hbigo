@@ -48,6 +48,8 @@ type HoContext interface {
 	// can be nil for a receive only setup
 	PoToPeer() Posting
 	SetPoToPeer(p2p Posting)
+	// panic instead of returning nil if no posting endpoint available
+	MustPoToPeer() Posting
 
 	Close()
 }
@@ -86,10 +88,9 @@ func (ctx *hoContext) SetHo(ho Hosting) {
 	ctx.ho = ho
 }
 
-func (ctx *hoContext) PoToPeer() Posting {
-	ctx.RLock()
-	defer ctx.RUnlock()
-	if ctx.po == nil {
+func (ctx *hoContext) MustPoToPeer() Posting {
+	p2p := ctx.PoToPeer()
+	if p2p == nil { // must be available, or panic
 		if ctx.Cancelled() {
 			err := ctx.Err()
 			if err != nil {
@@ -99,6 +100,12 @@ func (ctx *hoContext) PoToPeer() Posting {
 		}
 		panic(errors.NewUsageError("No posting endpoint available."))
 	}
+	return p2p
+}
+
+func (ctx *hoContext) PoToPeer() Posting {
+	ctx.RLock()
+	defer ctx.RUnlock()
 	return ctx.po
 }
 
@@ -109,21 +116,22 @@ func (ctx *hoContext) SetPoToPeer(p2p Posting) {
 }
 
 func (ctx *hoContext) Cancel(err error) {
-	// make sure posting context cancelled as well
-	if p2p := ctx.PoToPeer(); p2p != nil {
-		ctx.SetPoToPeer(nil)
-		p2p.Cancel(err)
+	// make sure posting endpoint cleared and posting context cancelled
+	var po Posting
+	func() { // use wlock to read and clear `po`
+		ctx.Lock()
+		defer ctx.Unlock()
+		po = ctx.po
+		ctx.po = nil
+	}()
+	if po != nil {
+		po.Cancel(err)
 	}
 	ctx.CancellableContext.Cancel(err)
 }
 
 func (ctx *hoContext) Close() {
-	// make sure posting context closed with hosting context
-	if p2p := ctx.PoToPeer(); p2p != nil {
-		ctx.SetPoToPeer(nil)
-		p2p.Close()
-	}
-	// make sure done channel closed
+	// currently implemented by cancelling with nil error
 	ctx.Cancel(nil)
 }
 
