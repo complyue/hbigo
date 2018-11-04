@@ -100,10 +100,11 @@ func (po *PostingEndpoint) PlugWire(
 func (po *PostingEndpoint) Notif(code string) (err error) {
 	defer func() {
 		if err != nil {
-			// in case sending error occurred, just log & close the wire
+			// in case sending error occurred, just log & stop hosting for the wire
 			glog.Error(errors.RichError(err))
-			// .Cancel(err) would cause more error than success
-			po.ho.Close()
+			if !po.ho.Cancelled() {
+				po.ho.Cancel(err)
+			}
 		}
 	}()
 	po.muSend.Lock()
@@ -117,10 +118,11 @@ func (po *PostingEndpoint) Notif(code string) (err error) {
 func (po *PostingEndpoint) NotifBSON(code string, o interface{}, hint string) (err error) {
 	defer func() {
 		if err != nil {
-			// in case sending error occurred, just log & close the wire
+			// in case sending error occurred, just log & stop hosting for the wire
 			glog.Error(errors.RichError(err))
-			// .Cancel(err) would cause more error than success
-			po.ho.Close()
+			if !po.ho.Cancelled() {
+				po.ho.Cancel(err)
+			}
 		}
 	}()
 	co, err := po.Co()
@@ -140,10 +142,11 @@ func (po *PostingEndpoint) NotifBSON(code string, o interface{}, hint string) (e
 func (po *PostingEndpoint) NotifData(code string, data <-chan []byte) (err error) {
 	defer func() {
 		if err != nil {
-			// in case sending error occurred, just log & close the wire
+			// in case sending error occurred, just log & stop hosting for the wire
 			glog.Error(errors.RichError(err))
-			// .Cancel(err) would cause more error than success
-			po.ho.Close()
+			if !po.ho.Cancelled() {
+				po.ho.Cancel(err)
+			}
 		}
 	}()
 	co, err := po.Co()
@@ -204,6 +207,9 @@ recvBSON(%v,%s)
 }
 
 func (po *PostingEndpoint) Co() (co Conver, err error) {
+	if po.Cancelled() {
+		return nil, po.Err()
+	}
 	po.muSend.Lock()
 	defer func() {
 		if e := recover(); e != nil {
@@ -215,12 +221,13 @@ func (po *PostingEndpoint) Co() (co Conver, err error) {
 			}
 			co = nil
 			po.muSend.Unlock()
+			// this wire should not be used for posting anyway, disconnect it
 			po.Cancel(err)
 		}
 	}()
 	if po.co != nil {
-		panic(errors.NewUsageError("Unclean co on po ?!"))
-		// todo prevent deadlock ?
+		err = errors.NewUsageError("Unclean co on po ?!")
+		return
 	}
 	po.co = newConver(po)
 	_, err = po.sendPacket(po.co.id, "co_begin")
