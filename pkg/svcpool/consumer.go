@@ -98,7 +98,7 @@ func (consumer *Consumer) GetService(
 	}
 
 	if service, ok = tunnels[tunnel]; ok {
-		if service.Posting.Cancelled() {
+		if service.Hosting.Cancelled() || service.Posting.Cancelled() {
 			delete(tunnels, tunnel)
 			ok = false
 		} else {
