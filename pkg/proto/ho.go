@@ -456,11 +456,12 @@ func (ho *HostingEndpoint) landOne() (gotObj interface{}, ok bool, err error) {
 }
 
 func (ho *HostingEndpoint) Cancel(err error) {
-	// make sure the done channel is closed anyway
-	defer ho.HoContext.Cancel(err)
+	// close the done channel now, if the hosting endpoint still appears connected to subsequent checks,
+	// recursive cancellations may come unexpectedly.
+	ho.HoContext.Cancel(err)
 
 	// cancel posting endpoint if still connected, it tends to use RLock, so process before WLock below, or deadlock!
-	if p2p := ho.PoToPeer(); p2p != nil {
+	if p2p := ho.PoToPeer(); p2p != nil && !p2p.Cancelled() {
 		p2p.Cancel(err)
 	}
 

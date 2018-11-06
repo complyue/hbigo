@@ -249,21 +249,24 @@ func (po *PostingEndpoint) coDone(co Conver) {
 }
 
 func (po *PostingEndpoint) Cancel(err error) {
+	if po.CancellableContext.Cancelled() {
+		return
+	}
+	// close the done channel now, if the posting endpoint still appears connected to subsequent checks,
+	// recursive cancellations may come unexpectedly.
+	po.CancellableContext.Cancel(err)
+
 	// close-to-signal error sent to peer or no need to send
 	errSent := make(chan struct{})
 	var closer func() error
 
-	// make sure the done channel is closed anyway
 	defer func() {
-		defer po.CancellableContext.Cancel(err)
 
 		select {
 		case <-errSent:
 			// error sent to peer
 		case <-time.After(5 * time.Second):
 			// timeout
-		case <-po.Done():
-			// done from other path ?
 		}
 
 		if closer != nil {
@@ -298,8 +301,8 @@ func (po *PostingEndpoint) Cancel(err error) {
 		}()
 	}
 
-	// make sure corun context cancelled as well
-	if co := po.co; co != nil {
+	// make sure conversation cancelled as well
+	if co := po.co; co != nil && !co.Cancelled() {
 		co.Cancel(err)
 	}
 }

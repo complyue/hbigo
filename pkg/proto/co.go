@@ -201,19 +201,35 @@ func (co *conver) RecvBSON(nBytes int, booter interface{}) (interface{}, error) 
 }
 
 func (co *conver) Cancel(err error) {
-	// make sure the done channel is closed anyway
-	defer co.CancellableContext.Cancel(err)
-
-	if co.po == nil {
-		// already closed
+	if co.CancellableContext.Cancelled() {
 		return
 	}
-	co.po.coDone(co)
-	co.po = nil
+	// close the done channel now, if the conversation still appears connected to subsequent checks,
+	// recursive cancellations may come unexpectedly.
+	co.CancellableContext.Cancel(err)
+
+	// cancel posting endpoint as well
+	if co.po != nil && !co.po.Cancelled() {
+		defer func() { // clear co.po anyway, to not cancel it twice
+			co.po = nil
+		}()
+		co.po.Cancel(err)
+	}
 }
 
 func (co *conver) Close() {
-	co.Cancel(nil)
+	defer func() { // clear co.po anyway, make sure coDone is called once at most
+		co.po = nil
+	}()
+	if co.po == nil {
+		// conversation already closed
+		return
+	} else if co.po.Cancelled() {
+		// posting endpoint already closed
+		glog.Warningf("Posting endpoint disconnected before conversation [%s] ended.", co.id)
+		return
+	}
+	co.po.coDone(co)
 }
 
 func (co *conver) Id() string {
