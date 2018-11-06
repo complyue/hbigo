@@ -102,8 +102,8 @@ func (po *PostingEndpoint) Notif(code string) (err error) {
 		if err != nil {
 			// in case sending error occurred, just log & stop hosting for the wire
 			glog.Error(errors.RichError(err))
-			if !po.ho.Cancelled() {
-				po.ho.Cancel(err)
+			if !po.Cancelled() {
+				po.Cancel(err)
 			}
 		}
 	}()
@@ -120,8 +120,8 @@ func (po *PostingEndpoint) NotifBSON(code string, o interface{}, hint string) (e
 		if err != nil {
 			// in case sending error occurred, just log & stop hosting for the wire
 			glog.Error(errors.RichError(err))
-			if !po.ho.Cancelled() {
-				po.ho.Cancel(err)
+			if !po.Cancelled() {
+				po.Cancel(err)
 			}
 		}
 	}()
@@ -144,8 +144,8 @@ func (po *PostingEndpoint) NotifData(code string, data <-chan []byte) (err error
 		if err != nil {
 			// in case sending error occurred, just log & stop hosting for the wire
 			glog.Error(errors.RichError(err))
-			if !po.ho.Cancelled() {
-				po.ho.Cancel(err)
+			if !po.Cancelled() {
+				po.Cancel(err)
 			}
 		}
 	}()
