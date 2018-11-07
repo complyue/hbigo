@@ -208,12 +208,17 @@ func (co *conver) Cancel(err error) {
 	// recursive cancellations may come unexpectedly.
 	co.CancellableContext.Cancel(err)
 
-	// cancel posting endpoint as well
-	if co.po != nil && !co.po.Cancelled() {
-		defer func() { // clear co.po anyway, to not cancel it twice
-			co.po = nil
+	po := co.po
+	if po != nil {
+		co.po = nil // clear anyway
+		// cancel posting endpoint as well,
+		// if this co is being cancelled by po cancellation, po is locked by current goro,
+		// start a goro here to avoid deadlock in this case
+		go func() {
+			if !po.Cancelled() {
+				po.Cancel(err)
+			}
 		}()
-		co.po.Cancel(err)
 	}
 }
 
