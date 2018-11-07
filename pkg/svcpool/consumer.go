@@ -123,7 +123,7 @@ func (consumer *Consumer) AssignProc(session string, sticky bool) (string, error
 	defer consumer.Unlock()
 
 	consumer.connectMaster()
-	co, err := consumer.PoolMaster.PoToPeer().Co()
+	co, err := consumer.PoolMaster.MustPoToPeer().Co()
 	if err != nil {
 		return "", err
 	}
@@ -153,7 +153,7 @@ func (consumer *Consumer) ReleaseProc(procAddr string) error {
 	defer consumer.Unlock()
 
 	consumer.connectMaster()
-	co, err := consumer.PoolMaster.PoToPeer().Co()
+	co, err := consumer.PoolMaster.MustPoToPeer().Co()
 	if err != nil {
 		return err
 	}
