@@ -47,7 +47,7 @@ type HoContext interface {
 	// the posting endpoint bound to this context
 	// can be nil for a receive only setup
 	PoToPeer() Posting
-	SetPoToPeer(p2p Posting)
+	SetPoToPeer(po Posting)
 	// panic instead of returning nil if no posting endpoint available
 	MustPoToPeer() Posting
 
@@ -89,8 +89,8 @@ func (ctx *hoContext) SetHo(ho Hosting) {
 }
 
 func (ctx *hoContext) MustPoToPeer() Posting {
-	p2p := ctx.PoToPeer()
-	if p2p == nil { // must be available, or panic
+	po := ctx.PoToPeer()
+	if po == nil { // must be available, or panic
 		if ctx.Cancelled() {
 			err := ctx.Err()
 			if err != nil {
@@ -100,7 +100,10 @@ func (ctx *hoContext) MustPoToPeer() Posting {
 		}
 		panic(errors.NewUsageError("No posting endpoint available."))
 	}
-	return p2p
+	if po.Cancelled() {
+		panic(errors.NewUsageError("Posting endpoint disconnected."))
+	}
+	return po
 }
 
 func (ctx *hoContext) PoToPeer() Posting {
@@ -109,10 +112,10 @@ func (ctx *hoContext) PoToPeer() Posting {
 	return ctx.po
 }
 
-func (ctx *hoContext) SetPoToPeer(p2p Posting) {
+func (ctx *hoContext) SetPoToPeer(po Posting) {
 	ctx.Lock()
 	defer ctx.Unlock()
-	ctx.po = p2p
+	ctx.po = po
 }
 
 func (ctx *hoContext) Cancel(err error) {

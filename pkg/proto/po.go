@@ -125,9 +125,10 @@ func (po *PostingEndpoint) NotifBSON(code string, o interface{}, hint string) (e
 			}
 		}
 	}()
-	co, err := po.Co()
-	if err != nil {
-		return err
+	co, e := po.Co()
+	if e != nil {
+		err = e
+		return
 	}
 	defer co.Close()
 	if _, err = po.sendPacket(code, ""); err != nil {
@@ -149,9 +150,10 @@ func (po *PostingEndpoint) NotifData(code string, data <-chan []byte) (err error
 			}
 		}
 	}()
-	co, err := po.Co()
-	if err != nil {
-		return err
+	co, e := po.Co()
+	if e != nil {
+		err = e
+		return
 	}
 	defer co.Close()
 	if _, err = po.sendPacket(code, ""); err != nil {
