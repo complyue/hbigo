@@ -144,6 +144,9 @@ func (co *conver) RecvObj() (result interface{}, err error) {
 	return
 }
 
+// TODO make this a configuable option
+const RecvTimeout = 10 * time.Second
+
 func (co *conver) recvObj() (interface{}, error) {
 	if glog.V(3) {
 		glog.Infof("Receiving object from posting conversation %s receiver %p ...", co.id, co.chObj)
@@ -181,6 +184,10 @@ func (co *conver) recvObj() (interface{}, error) {
 		case <-time.After(1 * time.Millisecond):
 			return nil, errors.New("Wire already disconnected.")
 		}
+	case <-time.After(RecvTimeout):
+		err := errors.Errorf("Receiving timeout after %+v", RecvTimeout)
+		po.Cancel(err)
+		return nil, err
 	}
 }
 
