@@ -187,6 +187,9 @@ func (co *conver) recvObj() (interface{}, error) {
 	case <-time.After(RecvTimeout):
 		err := errors.Errorf("Receiving timeout after %+v", RecvTimeout)
 		po.Cancel(err)
+		if po.ho != nil {
+			po.ho.Cancel(err)
+		}
 		return nil, err
 	}
 }
