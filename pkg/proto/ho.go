@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/complyue/hbigo/pkg/errors"
 	"github.com/globalsign/mgo/bson"
@@ -263,12 +264,26 @@ func (ho *HostingEndpoint) StartLandingLoops() {
 			result, ok, err := ho.landOne()
 			if err != nil {
 				panic(err)
-			} else if ok && ho.poRcvr != nil {
-				select {
-				case <-ho.Done():
-					return
-				case ho.poRcvr <- result:
-					// object sent to posting conversation
+			}
+			if ok {
+				poRcvr := ho.poRcvr
+				if poRcvr != nil {
+					if glog.V(3) {
+						glog.Infof("Sending landed object to posting receiver ...")
+					}
+					select {
+					case <-ho.Done():
+						return
+					case poRcvr <- result:
+						// object sent to posting conversation
+					case <-time.After(PoRecvTimeout):
+						err := errors.Errorf("Posting receiver timeout after %+v", PoRecvTimeout)
+						ho.Cancel(err)
+						return
+					}
+					if glog.V(3) {
+						glog.Infof("Sent landed object to posting receiver.")
+					}
 				}
 			}
 		}
@@ -276,6 +291,9 @@ func (ho *HostingEndpoint) StartLandingLoops() {
 	}()
 
 }
+
+// todo make this a configurable option
+const PoRecvTimeout = 10 * time.Second
 
 // land next packet and return the result
 func (ho *HostingEndpoint) landOne() (gotObj interface{}, ok bool, err error) {
@@ -373,6 +391,12 @@ func (ho *HostingEndpoint) landOne() (gotObj interface{}, ok bool, err error) {
 			// panic to stop the loop, will be logged by deferred err handler above
 			panic(errors.NewPacketError(err, ho.netIdent, pkt.WireDir, pkt.Payload))
 		} else {
+			if glog.V(3) {
+				glog.Infof(
+					"Vanilla packet landed \n ** HBI-CODE **\n%s\n -- HBI-CODE --, result: ok=%v, %+v",
+					pkt.Payload, ok, execResult,
+				)
+			}
 			return execResult, ok, err
 		}
 
@@ -412,8 +436,11 @@ func (ho *HostingEndpoint) landOne() (gotObj interface{}, ok bool, err error) {
 				}
 			} else {
 				// the corresponding local posting conversation has already finished without
-				// blocking recv, in this case the next packet right away should be an empty co_ack
+				// blocking recv
 				// todo detect & report violating cases
+
+				// clear poRcvr
+				ho.poRcvr = nil
 			}
 		case nil:
 			panic(errors.NewUsageError("Acking co to no posting endpoint ?!"))
@@ -433,8 +460,9 @@ func (ho *HostingEndpoint) landOne() (gotObj interface{}, ok bool, err error) {
 				if ho.poRcvr != po.co.chObj {
 					panic(errors.NewWireError("Posting co's object receiving channel not on receiver stack top ?!"))
 				}
-				ho.poRcvr = nil
 			}
+			// clear poRcvr anyway
+			ho.poRcvr = nil
 		case nil:
 			panic(errors.NewUsageError("Acking co to no posting endpoint ?!"))
 		default:
