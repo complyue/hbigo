@@ -64,7 +64,7 @@ type PostingEndpoint struct {
 
 	ho *HostingEndpoint
 
-	muSend sync.Mutex
+	muSend, muCoPtr sync.Mutex
 
 	co *conver
 }
@@ -212,6 +212,7 @@ func (po *PostingEndpoint) Co() (co Conver, err error) {
 	if po.Cancelled() {
 		return nil, po.Err()
 	}
+
 	po.muSend.Lock()
 	defer func() {
 		if e := recover(); e != nil {
@@ -227,27 +228,47 @@ func (po *PostingEndpoint) Co() (co Conver, err error) {
 			po.Cancel(err)
 		}
 	}()
+
+	po.muCoPtr.Lock()
+	defer po.muCoPtr.Unlock()
 	if po.co != nil {
 		err = errors.NewUsageError("Unclean co on po ?!")
 		return
 	}
+
 	po.co = newConver(po)
+	co = po.co
 	_, err = po.sendPacket(po.co.id, "co_begin")
 	if err != nil {
 		return
 	}
+	return
+}
+
+func (po *PostingEndpoint) currCo() (co *conver) {
+	po.muCoPtr.Lock()
 	co = po.co
+	po.muCoPtr.Unlock()
 	return
 }
 
 func (po *PostingEndpoint) coDone(co Conver) {
+	po.muCoPtr.Lock()
+	defer po.muCoPtr.Unlock()
+
 	if co != po.co {
 		panic(errors.NewUsageError("Unmatched coDone ?!"))
 		// todo prevent deadlock ?
 	}
-	po.sendPacket(po.co.id, "co_end")
+
 	po.co = nil
-	po.muSend.Unlock()
+	defer po.muSend.Unlock() // unlock anyway
+	if _, err := po.sendPacket(co.(*conver).id, "co_end"); err != nil {
+		glog.Errorf("Error sending co_end packet id=%s: %+v", co.(*conver).id, err)
+		// not using po.Cancel(err), that'll try send peer error thus will deadlock,
+		// as po.muSend is still held here.
+		po.Close()
+	}
 }
 
 func (po *PostingEndpoint) Cancel(err error) {
@@ -304,7 +325,7 @@ func (po *PostingEndpoint) Cancel(err error) {
 	}
 
 	// make sure conversation cancelled as well
-	if co := po.co; co != nil && !co.Cancelled() {
+	if co := po.currCo(); co != nil && !co.Cancelled() {
 		co.Cancel(err)
 	}
 }

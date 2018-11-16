@@ -426,7 +426,7 @@ func (ho *HostingEndpoint) landOne() (gotObj interface{}, ok bool, err error) {
 		case *PostingEndpoint:
 			coID := pkt.Payload
 			po := p2p.(*PostingEndpoint)
-			co := po.co
+			co := po.currCo()
 			if co != nil && co.id == coID {
 				// current posting conversation matched ack'ed co id,
 				// set its object receiving channel as posting (active) receiver
@@ -454,10 +454,11 @@ func (ho *HostingEndpoint) landOne() (gotObj interface{}, ok bool, err error) {
 		case *PostingEndpoint:
 			coID := pkt.Payload
 			po := p2p.(*PostingEndpoint)
-			if po.co != nil && po.co.id == coID {
+			co := po.currCo()
+			if co != nil && co.id == coID {
 				// current posting conversation matched ack'ed co id,
 				// verify its object receiving channel is current posting (active) receiver and clear
-				if ho.poRcvr != po.co.chObj {
+				if ho.poRcvr != co.chObj {
 					panic(errors.NewWireError("Posting co's object receiving channel not on receiver stack top ?!"))
 				}
 			}
