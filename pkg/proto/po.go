@@ -223,11 +223,17 @@ func (po *PostingEndpoint) Co() (co Conver, err error) {
 				po.co = nil
 			}
 			co = nil
+		}
+		if co == nil {
 			po.muSend.Unlock()
 			// this wire should not be used for posting anyway, disconnect it
 			po.Cancel(err)
 		}
 	}()
+
+	if po.Cancelled() {
+		return nil, po.Err()
+	}
 
 	po.muCoPtr.Lock()
 	defer po.muCoPtr.Unlock()
@@ -262,19 +268,30 @@ func (po *PostingEndpoint) coDone(co Conver) {
 	}
 
 	po.co = nil
-	defer po.muSend.Unlock() // unlock anyway
 	if _, err := po.sendPacket(co.(*conver).id, "co_end"); err != nil {
 		glog.Errorf("Error sending co_end packet id=%s: %+v", co.(*conver).id, err)
+		// unlock muSend before closing the posting endpoint
+		po.muSend.Unlock()
 		// not using po.Cancel(err), that'll try send peer error thus will deadlock,
 		// as po.muSend is still held here.
 		po.Close()
+		return
 	}
+	// normal unlock
+	po.muSend.Unlock()
 }
 
 func (po *PostingEndpoint) Cancel(err error) {
 	if po.CancellableContext.Cancelled() {
+		// do not repeat cancellation
 		return
 	}
+
+	// make sure conversation if present, cancelled before posting endpoint
+	if co := po.currCo(); co != nil && !co.Cancelled() {
+		co.Cancel(err)
+	}
+
 	// close the done channel now, if the posting endpoint still appears connected to subsequent checks,
 	// recursive cancellations may come unexpectedly.
 	po.CancellableContext.Cancel(err)
@@ -322,11 +339,6 @@ func (po *PostingEndpoint) Cancel(err error) {
 			// don't care possible error
 			_, _ = po.sendPacket(fmt.Sprintf("%+v", errors.RichError(err)), "err")
 		}()
-	}
-
-	// make sure conversation cancelled as well
-	if co := po.currCo(); co != nil && !co.Cancelled() {
-		co.Cancel(err)
 	}
 }
 
