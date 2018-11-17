@@ -104,16 +104,16 @@ func (dc *DiagnosticContext) Exec(code string) (result interface{}, ok bool, err
 }
 
 // hijack code landing logic
-func (dc *DiagnosticContext) CoExec(code string) (err error) {
+func (dc *DiagnosticContext) GoExec(code string) (err error) {
 	if !dc.Choppy { // normal landing if not choppy
-		return dc.HoContext.CoExec(code)
+		return dc.HoContext.GoExec(code)
 	}
 
 	dc.InbCoRunHist = append(dc.InbCoRunHist, code)
 
 	if dc.NextCoRunToLand == len(dc.InbCoRunHist)-1 && dc.Delegate != nil {
 		// fluent landing by delegate, continue it
-		err = dc.Delegate.CoExec(code)
+		err = dc.Delegate.GoExec(code)
 		if err != nil {
 			glog.Error(err)
 			return
