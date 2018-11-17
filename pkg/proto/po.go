@@ -264,14 +264,6 @@ recvBSON(%v,%s)
 }
 
 func (po *PostingEndpoint) Co() (co Conver, err error) {
-	po.muCoPtr.Lock()
-	defer po.muCoPtr.Unlock()
-
-	if po.co != nil {
-		err = errors.NewUsageError("Unclean co on po ?!")
-		return
-	}
-
 	po.acquireSendTicket()
 	defer func() {
 		if e := recover(); e != nil {
@@ -289,6 +281,14 @@ func (po *PostingEndpoint) Co() (co Conver, err error) {
 			po.Cancel(err)
 		}
 	}()
+
+	po.muCoPtr.Lock()
+	defer po.muCoPtr.Unlock()
+
+	if po.co != nil {
+		err = errors.NewUsageError("Unclean co on po ?!")
+		return
+	}
 
 	po.co = newConver(po)
 	co = po.co
