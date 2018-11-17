@@ -424,10 +424,10 @@ func (ho *HostingEndpoint) landOne() (gotObj interface{}, ok bool, err error) {
 
 	case "co_ack_begin":
 		// ack to co_begin
-		switch p2p := ho.PoToPeer(); p2p.(type) {
+		switch po := ho.PoToPeer(); po.(type) {
 		case *PostingEndpoint:
 			coID := pkt.Payload
-			po := p2p.(*PostingEndpoint)
+			po := po.(*PostingEndpoint)
 			co := po.currCo()
 			if co != nil && co.id == coID {
 				// current posting conversation matched ack'ed co id,
@@ -447,15 +447,15 @@ func (ho *HostingEndpoint) landOne() (gotObj interface{}, ok bool, err error) {
 		case nil:
 			panic(errors.NewUsageError("Acking co to no posting endpoint ?!"))
 		default:
-			panic(errors.NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
+			panic(errors.NewUsageError(fmt.Sprintf("Unexpected posting endpoint type %T", po)))
 		}
 
 	case "co_ack_end":
 		// ack to co_end
-		switch p2p := ho.PoToPeer(); p2p.(type) {
+		switch po := ho.PoToPeer(); po.(type) {
 		case *PostingEndpoint:
 			coID := pkt.Payload
-			po := p2p.(*PostingEndpoint)
+			po := po.(*PostingEndpoint)
 			co := po.currCo()
 			if co != nil && co.id == coID {
 				// current posting conversation matched ack'ed co id,
@@ -469,7 +469,7 @@ func (ho *HostingEndpoint) landOne() (gotObj interface{}, ok bool, err error) {
 		case nil:
 			panic(errors.NewUsageError("Acking co to no posting endpoint ?!"))
 		default:
-			panic(errors.NewUsageError(fmt.Sprintf("Unexpected p2p type %T", p2p)))
+			panic(errors.NewUsageError(fmt.Sprintf("Unexpected po type %T", po)))
 		}
 
 	case "err":
@@ -492,8 +492,8 @@ func (ho *HostingEndpoint) Cancel(err error) {
 	ho.HoContext.Cancel(err)
 
 	// cancel posting endpoint if still connected, it tends to use RLock, so process before WLock below, or deadlock!
-	if p2p := ho.PoToPeer(); p2p != nil && !p2p.Cancelled() {
-		p2p.Cancel(err)
+	if po := ho.PoToPeer(); po != nil && !po.Cancelled() {
+		po.Cancel(err)
 	}
 
 	ho.Lock()

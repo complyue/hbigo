@@ -91,17 +91,25 @@ func (ctx *hoContext) SetHo(ho Hosting) {
 func (ctx *hoContext) MustPoToPeer() Posting {
 	po := ctx.PoToPeer()
 	if po == nil { // must be available, or panic
+		var err error
 		if ctx.Cancelled() {
-			err := ctx.Err()
-			if err != nil {
-				// propagate connection errors
-				panic(err)
-			}
+			// propagate previous error
+			err = ctx.Err()
 		}
-		panic(errors.NewUsageError("No posting endpoint available."))
+		if err == nil {
+			err = errors.NewUsageError("No posting endpoint available.")
+		}
+		if !ctx.Cancelled() {
+			ctx.Cancel(err)
+		}
+		panic(err)
 	}
 	if po.Cancelled() {
-		panic(errors.NewUsageError("Posting endpoint disconnected."))
+		err := po.Err()
+		if err == nil {
+			err = errors.NewUsageError("Posting endpoint disconnected.")
+		}
+		panic(err)
 	}
 	return po
 }
@@ -119,18 +127,18 @@ func (ctx *hoContext) SetPoToPeer(po Posting) {
 }
 
 func (ctx *hoContext) Cancel(err error) {
-	// make sure posting endpoint cleared and posting context cancelled
-	var po Posting
-	func() { // use wlock to read and clear `po`
-		ctx.Lock()
-		defer ctx.Unlock()
-		po = ctx.po
-		ctx.po = nil
-	}()
-	if po != nil {
-		po.Cancel(err)
+	if ctx.CancellableContext.Cancelled() {
+		return
 	}
 	ctx.CancellableContext.Cancel(err)
+	po := ctx.PoToPeer()
+	if po != nil && !po.Cancelled() {
+		po.Cancel(err)
+	}
+	ho := ctx.Ho()
+	if ho != nil && !ho.Cancelled() {
+		ho.Cancel(err)
+	}
 }
 
 func (ctx *hoContext) Close() {
