@@ -205,8 +205,8 @@ func (ho *HostingEndpoint) StartLandingLoops() {
 
 			po := ho.PoToPeer().(*PostingEndpoint)
 			func() { // hold send mutex and maintain chObj during this hosting (passive) conversation
-				po.muSend.Lock()
-				defer po.muSend.Unlock()
+				po.acquireSendTicket()
+				defer po.releaseSendTicket()
 
 				if _, err := po.sendPacket(coID, "co_ack_begin"); err != nil {
 					panic(err)
@@ -322,8 +322,10 @@ func (ho *HostingEndpoint) landOne() (gotObj interface{}, ok bool, err error) {
 	var pkt *Packet
 	pkt, err = ho.recvPacket()
 	if err != nil {
-		if err == io.EOF {
-			// live with EOF by far, pkt may be nil or not in this case
+		if err == io.EOF && pkt != nil {
+			// got last packet before disconnected, land it for now,
+			// todo confirm next landing attempt should get EOF again without undesired side-effects,
+			// note this might be platform specific.
 			err = nil
 		} else {
 			// treat receiving error as fatal, and fully disconnect (i.e.

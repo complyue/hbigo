@@ -46,9 +46,34 @@ type Posting interface {
 }
 
 func NewPostingEndpoint() *PostingEndpoint {
-	return &PostingEndpoint{
+	po := &PostingEndpoint{
 		CancellableContext: NewCancellableContext(),
+
+		chSendTicket: make(chan struct{}),
+		chSendDone:   make(chan struct{}),
 	}
+
+	// send ticket granting loop
+	go func() {
+		for {
+			select {
+			case <-po.CancellableContext.Done():
+				// posting endpoint disconnected
+				return
+			case po.chSendTicket <- struct{}{}:
+				// a send ticket granted
+			}
+			select {
+			case <-po.CancellableContext.Done():
+				// posting endpoint disconnected
+				return
+			case <-po.chSendDone:
+				// a send ticket revoked
+			}
+		}
+	}()
+
+	return po
 }
 
 type PostingEndpoint struct {
@@ -64,9 +89,39 @@ type PostingEndpoint struct {
 
 	ho *HostingEndpoint
 
-	muSend, muCoPtr sync.Mutex
+	chSendTicket, chSendDone chan struct{}
+
+	muCoPtr sync.Mutex
 
 	co *conver
+}
+
+func (po *PostingEndpoint) acquireSendTicket() {
+	select {
+	case <-po.CancellableContext.Done():
+		err := po.CancellableContext.Err()
+		if err == nil {
+			err = errors.Errorf("Posting endpoint already disconnected.")
+		}
+		panic(err)
+	case <-po.chSendTicket:
+		// got the ticket
+		return
+	}
+}
+
+func (po *PostingEndpoint) releaseSendTicket() {
+	select {
+	case <-po.CancellableContext.Done():
+		err := po.CancellableContext.Err()
+		if err == nil {
+			err = errors.Errorf("Posting endpoint already disconnected.")
+		}
+		panic(err)
+	case po.chSendDone <- struct{}{}:
+		// released the ticket
+		return
+	}
 }
 
 func (po *PostingEndpoint) NetIdent() string {
@@ -107,8 +162,8 @@ func (po *PostingEndpoint) Notif(code string) (err error) {
 			}
 		}
 	}()
-	po.muSend.Lock()
-	defer po.muSend.Unlock()
+	po.acquireSendTicket()
+	defer po.releaseSendTicket()
 	if _, err = po.sendPacket(code, ""); err != nil {
 		return
 	}
@@ -213,7 +268,7 @@ func (po *PostingEndpoint) Co() (co Conver, err error) {
 		return nil, po.Err()
 	}
 
-	po.muSend.Lock()
+	po.acquireSendTicket()
 	defer func() {
 		if e := recover(); e != nil {
 			err = errors.RichError(e)
@@ -225,7 +280,7 @@ func (po *PostingEndpoint) Co() (co Conver, err error) {
 			co = nil
 		}
 		if co == nil {
-			po.muSend.Unlock()
+			po.releaseSendTicket()
 			// this wire should not be used for posting anyway, disconnect it
 			po.Cancel(err)
 		}
@@ -271,14 +326,14 @@ func (po *PostingEndpoint) coDone(co Conver) {
 	if _, err := po.sendPacket(co.(*conver).id, "co_end"); err != nil {
 		glog.Errorf("Error sending co_end packet id=%s: %+v", co.(*conver).id, err)
 		// unlock muSend before closing the posting endpoint
-		po.muSend.Unlock()
+		po.releaseSendTicket()
 		// not using po.Cancel(err), that'll try send peer error thus will deadlock,
 		// as po.muSend is still held here.
 		po.Close()
 		return
 	}
 	// normal unlock
-	po.muSend.Unlock()
+	po.releaseSendTicket()
 }
 
 func (po *PostingEndpoint) Cancel(err error) {
@@ -301,7 +356,6 @@ func (po *PostingEndpoint) Cancel(err error) {
 	var closer func() error
 
 	defer func() {
-
 		select {
 		case <-errSent:
 			// error sent to peer
@@ -331,10 +385,15 @@ func (po *PostingEndpoint) Cancel(err error) {
 		close(errSent)
 	} else { // try send full error info to peer before closer
 		go func() {
-			defer close(errSent)
+			defer func() {
+				if e := recover(); e != nil {
+					// don't care possible error
+				}
+				close(errSent)
+			}()
 
-			po.muSend.Lock()
-			defer po.muSend.Unlock()
+			po.acquireSendTicket()
+			defer po.releaseSendTicket()
 
 			// don't care possible error
 			_, _ = po.sendPacket(fmt.Sprintf("%+v", errors.RichError(err)), "err")
