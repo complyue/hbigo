@@ -71,6 +71,9 @@ type Conver interface {
 
 	// finish this conversation to release the wire for other traffic
 	Close()
+
+	RecvTimeout() time.Duration
+	SetRecvTimeout(time.Duration)
 }
 
 func newConver(po *PostingEndpoint) *conver {
@@ -78,6 +81,8 @@ func newConver(po *PostingEndpoint) *conver {
 		CancellableContext: NewCancellableContext(),
 		po:                 po,
 		chObj:              make(chan interface{}),
+
+		recvTimeout: 60 * time.Second,
 	}
 	co.id = fmt.Sprintf("%p", co)
 	return co
@@ -90,6 +95,8 @@ type conver struct {
 	po    *PostingEndpoint
 	chObj chan interface{}
 	id    string
+
+	recvTimeout time.Duration
 }
 
 func (co *conver) Get(code string, hint interface{}) (result interface{}, err error) {
@@ -144,9 +151,6 @@ func (co *conver) RecvObj() (result interface{}, err error) {
 	return
 }
 
-// TODO make this a configuable option
-const RecvTimeout = 10 * time.Second
-
 func (co *conver) recvObj() (interface{}, error) {
 	if glog.V(3) {
 		glog.Infof("Receiving object from posting conversation %s receiver %p ...", co.id, co.chObj)
@@ -184,8 +188,8 @@ func (co *conver) recvObj() (interface{}, error) {
 		case <-time.After(1 * time.Millisecond):
 			return nil, errors.New("Wire already disconnected.")
 		}
-	case <-time.After(RecvTimeout):
-		err := errors.Errorf("Receiving timeout after %+v", RecvTimeout)
+	case <-time.After(co.recvTimeout):
+		err := errors.Errorf("Receiving timeout after %+v", co.recvTimeout)
 		po.Cancel(err)
 		if po.ho != nil {
 			po.ho.Cancel(err)
@@ -219,27 +223,22 @@ func (co *conver) Cancel(err error) {
 	co.CancellableContext.Cancel(err)
 
 	po := co.po
-	if po != nil {
-		co.po = nil // clear anyway
-		// cancel posting endpoint as well,
-		// if this co is being cancelled by po cancellation, po is locked by current goro,
-		// start a goro here to avoid deadlock in this case
-		go func() {
-			if !po.Cancelled() {
-				po.Cancel(err)
-			}
-		}()
-	}
+	// cancel posting endpoint as well,
+	// if this co is being cancelled by po cancellation, po is locked by current goro,
+	// start a goro here to avoid deadlock in this case
+	go func() {
+		if !po.Cancelled() {
+			po.Cancel(err)
+		}
+	}()
 }
 
 func (co *conver) Close() {
-	defer func() { // clear co.po anyway, make sure coDone is called once at most
-		co.po = nil
-	}()
-	if co.po == nil {
-		// conversation already closed
+	if co.Cancelled() {
+		// conversation already cancelled
 		return
-	} else if co.po.Cancelled() {
+	}
+	if co.po.Cancelled() {
 		// posting endpoint already closed
 		glog.Warningf("Posting endpoint disconnected before conversation [%s] ended.", co.id)
 		return
@@ -257,4 +256,12 @@ func (co *conver) Po() Posting {
 
 func (co *conver) Ho() Hosting {
 	return co.po.ho
+}
+
+func (co *conver) RecvTimeout() time.Duration {
+	return co.recvTimeout
+}
+
+func (co *conver) SetRecvTimeout(recvTimeout time.Duration) {
+	co.recvTimeout = recvTimeout
 }

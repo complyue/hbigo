@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/complyue/hbigo"
+	"github.com/golang/glog"
 )
 
 func NewConsumer(
@@ -111,6 +113,7 @@ func (consumer *Consumer) GetService(
 	}
 	service, err = hbi.DialTCP(ctxFact(), procAddr)
 	if err != nil {
+		glog.Warningf("Service at [%v] not available atm.", procAddr)
 		return
 	}
 	tunnels[tunnel] = service
@@ -128,24 +131,26 @@ func (consumer *Consumer) AssignProc(session string, sticky bool) (string, error
 		return "", err
 	}
 	defer co.Close()
-	if addrStr, err := co.Get(fmt.Sprintf(`
+	co.SetRecvTimeout(10 * time.Second)
+	addrStr, err := co.Get(fmt.Sprintf(`
 AssignProc(%#v,%#v)
-`, session, sticky), nil); err != nil {
-		return "", nil
-	} else {
-		procAddr := addrStr.(string)
-
-		// detect special case for solo services, return pool address if port is the same.
-		// this is to support port mapped addresses instead of direct IP reachability
-		if colonPos := strings.LastIndex(procAddr, ":"); colonPos > 0 {
-			port := procAddr[colonPos:]
-			if strings.HasSuffix(consumer.PoolAddr, port) {
-				return consumer.PoolAddr, nil
-			}
-		}
-
-		return procAddr, nil
+`, session, sticky), nil)
+	if err != nil {
+		return "", err
 	}
+
+	procAddr := addrStr.(string)
+
+	// detect special case for solo services, return pool address if port is the same.
+	// this is to support port mapped addresses instead of direct IP reachability
+	if colonPos := strings.LastIndex(procAddr, ":"); colonPos > 0 {
+		port := procAddr[colonPos:]
+		if strings.HasSuffix(consumer.PoolAddr, port) {
+			return consumer.PoolAddr, nil
+		}
+	}
+
+	return procAddr, nil
 }
 
 func (consumer *Consumer) ReleaseProc(procAddr string) error {
