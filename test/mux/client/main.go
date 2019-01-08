@@ -76,7 +76,7 @@ Watch(%d)
 				if err := co.SendCode("Echo()"); err != nil {
 					panic(err)
 				}
-				err = co.SendBSON(obj2Echo, "&Evt{}")
+				err = co.SendBSON(obj2Echo, "new(Evt)")
 				if err != nil {
 					panic(err)
 				}

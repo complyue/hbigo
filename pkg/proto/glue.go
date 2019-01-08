@@ -12,12 +12,14 @@ import (
 // scan for the deepest *hoContext embedded into the interface,
 // collect exported methods of root, and getters/setters for exported fields at any level.
 func scanForExports(ctx HoContext, exports map[string]interface{}, root *hoContext) *hoContext {
-	var (
-		pv = reflect.ValueOf(ctx)
-		pt = pv.Type()
-		cv = pv.Elem()
-		ct = cv.Type()
-	)
+	pv := reflect.ValueOf(ctx)
+	pt := pv.Type()
+	if pt.Kind() != reflect.Ptr {
+		panic("HoContext need pointer implementation, struct implementation not expected!")
+	}
+	cv := pv.Elem()
+	ct := cv.Type()
+
 	if root == nil {
 		root, _ = ctx.(*hoContext)
 	}
@@ -47,7 +49,7 @@ func scanForExports(ctx HoContext, exports map[string]interface{}, root *hoConte
 				fv.Set(args[0])
 				return
 			},
-		)
+		).Interface()
 	}
 	if ctx != root {
 		// collect exported methods of the context struct
@@ -57,7 +59,7 @@ func scanForExports(ctx HoContext, exports map[string]interface{}, root *hoConte
 				continue // ignore unexported method
 			}
 			mv := pv.Method(mi)
-			exports[mt.Name] = mv
+			exports[mt.Name] = mv.Interface()
 		}
 	}
 	return root
@@ -114,7 +116,7 @@ func PrepareHosting(ctx HoContext) {
 		for t.Kind() == reflect.Ptr {
 			t = t.Elem()
 		}
-		hc.put("", t)
+		hc.env[t.Name()] = t
 	}
 
 	var apiText bytes.Buffer
@@ -123,27 +125,32 @@ func PrepareHosting(ctx HoContext) {
 			// in black list, skip
 			continue
 		}
-		hc.put(k, v)
+		hc.env[k] = v
 		apiText.WriteString(fmt.Sprintf(" * func - %s:\n\t%#v\n", k, v))
 	}
 	// poorman's API manual
-	hc.put("API", apiText.String())
+	hc.env["API"] = apiText.String()
 
 	// plant some non-overridable utility funcs
 
+	// todo: implement this by goScript in a better way
+	hc.env["new"] = func(rt reflect.Type) interface{} {
+		return reflect.New(rt).Interface()
+	}
+
 	// ping/pong game for alive-checking/keeping
-	hc.put("pong", func() {}) // nop response to ping by remote
+	hc.env["pong"] = func() {} // nop response to ping by remote
 	// react to connectivity test, send pong() back
-	hc.put("ping", func() {
+	hc.env["ping"] = func() {
 		if po := hc.po; po != nil {
 			po.Notif("pong()")
 		}
-	})
+	}
 
 	// expose the bson receiver method, converting err-out to panic.
 	// note `(Co)SendBSON()` depends on availability of this method
 	// at peer hosting env to work
-	hc.put("recvBSON", func(nBytes int, booter interface{}) interface{} {
+	hc.env["recvBSON"] = func(nBytes int, booter interface{}) interface{} {
 		ho := hc.Ho().(*HostingEndpoint)
 		o, err := ho.recvBSON(nBytes, booter)
 		if err != nil {
@@ -151,7 +158,7 @@ func PrepareHosting(ctx HoContext) {
 			panic(err)
 		}
 		return o
-	})
+	}
 
 	// expose methods for hosted error (re)construction
 	exports["NewError"] = errors.New
@@ -159,20 +166,20 @@ func PrepareHosting(ctx HoContext) {
 	// plant some common funcs for diagnostics
 
 	// expose methods to access the hosting object
-	hc.put("Ho", hc.Ho)
+	hc.env["Ho"] = hc.Ho
 	// expose methods to access the posting object
-	hc.put("PoToPeer", hc.PoToPeer)
+	hc.env["PoToPeer"] = hc.PoToPeer
 
 	// expose methods to reveal landing result by this hosting context to peer context
 	// todo use something better than println() ?
-	hc.put("reveal", func(format string, a ...interface{}) {
+	hc.env["reveal"] = func(format string, a ...interface{}) {
 		s := fmt.Sprintf(format, a...)
 		if err := hc.PoToPeer().Notif(fmt.Sprintf(`
 println(%#v)
 `, s)); err != nil {
 			panic(err)
 		}
-	})
+	}
 
 }
 

@@ -29,7 +29,7 @@ func (w *Watchable) Watch(interval int) {
 			glog.V(2).Infof("Happening %#v", evt)
 			if err := p2p.NotifBSON(`
 Happened()
-`, evt, "&Evt{}"); err != nil {
+`, evt, "new(Evt)"); err != nil {
 				panic(err)
 			}
 
@@ -50,7 +50,7 @@ func (w *Watchable) Echo() {
 		panic(err)
 	}
 	glog.V(1).Infof("Sending object [%#v] back...\n", obj)
-	w.Ho().CoSendBSON(obj, "&Evt{}")
+	w.Ho().CoSendBSON(obj, "new(Evt)")
 }
 
 func main() {

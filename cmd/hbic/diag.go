@@ -103,38 +103,6 @@ func (dc *DiagnosticContext) Exec(code string) (result interface{}, ok bool, err
 	return
 }
 
-// hijack code landing logic
-func (dc *DiagnosticContext) GoExec(code string) (err error) {
-	if !dc.Choppy { // normal landing if not choppy
-		return dc.HoContext.GoExec(code)
-	}
-
-	dc.InbCoRunHist = append(dc.InbCoRunHist, code)
-
-	if dc.NextCoRunToLand == len(dc.InbCoRunHist)-1 && dc.Delegate != nil {
-		// fluent landing by delegate, continue it
-		err = dc.Delegate.GoExec(code)
-		if err != nil {
-			glog.Error(err)
-			return
-		}
-		dc.NextCoRunToLand++
-		return
-	}
-
-	fmt.Fprintf(os.Stderr, "CoRunIn[%d]:\n#-#-#\n%s\n*-*-*\n", len(dc.InbCoRunHist), code)
-
-	select {
-	case err = <-dc.chErr:
-		return
-	case <-dc.chCo:
-	}
-
-	dc.NextCoRunToLand++
-
-	return
-}
-
 func (dc *DiagnosticContext) LandOne() (result interface{}, ok bool, err error) {
 	if dc.NextCodeToLand >= len(dc.InbCodeHist) {
 		fmt.Fprintf(os.Stderr, "[diag] no code pending.")
