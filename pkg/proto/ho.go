@@ -102,8 +102,12 @@ func (ho *HostingEndpoint) CoSendData(data <-chan []byte) {
 }
 
 func (ho *HostingEndpoint) CoSendBSON(o interface{}, hint string) {
+	bb, err := bson.Marshal(o)
+	if err != nil {
+		panic(err)
+	}
 	ho.coPoQue <- CoPoTask{entry: func(po *PostingEndpoint) {
-		if err := po.sendBSON(o, hint); err != nil {
+		if err := po.sendBSON(bb, hint); err != nil {
 			panic(err)
 		}
 	}}
@@ -374,8 +378,12 @@ func (ho *HostingEndpoint) landOne() (gotObj interface{}, ok bool, err error) {
 		} else if strings.HasPrefix(serialization, "bson:") {
 			// structured value, use hinted bson serialization
 			bsonHint := serialization[5:]
+			bb, err := bson.Marshal(execResult)
+			if err != nil {
+				panic(err)
+			}
 			ho.coPoQue <- CoPoTask{entry: func(po *PostingEndpoint) {
-				if err := po.sendBSON(execResult, bsonHint); err != nil {
+				if err := po.sendBSON(bb, bsonHint); err != nil {
 					panic(err)
 				}
 			}}

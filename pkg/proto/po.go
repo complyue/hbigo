@@ -189,7 +189,12 @@ func (po *PostingEndpoint) NotifBSON(code string, o interface{}, hint string) (e
 	if _, err = po.sendPacket(code, ""); err != nil {
 		return
 	}
-	if err = po.sendBSON(o, hint); err != nil {
+	bb, e := bson.Marshal(o)
+	if e != nil {
+		err = e
+		return
+	}
+	if err = po.sendBSON(bb, hint); err != nil {
 		return
 	}
 	return
@@ -224,7 +229,7 @@ func (po *PostingEndpoint) Ho() Hosting {
 	return po.ho
 }
 
-func (po *PostingEndpoint) sendBSON(o interface{}, hint string) error {
+func (po *PostingEndpoint) sendBSON(bb []byte, hint string) error {
 	var scriptBytes, dataBytes int64
 	var err error
 	if glog.V(3) {
@@ -238,23 +243,19 @@ func (po *PostingEndpoint) sendBSON(o interface{}, hint string) error {
 		hint = "nil"
 	}
 
-	if o == nil { // short circuit logic
+	if len(bb) <= 0 { // short circuit logic
 		scriptBytes, err = po.sendPacket(fmt.Sprintf(`
 recvBSON(0,%s)
 `, hint), "")
 		return err
 	}
 
-	buf, err := bson.Marshal(o)
-	if err != nil {
-		return err
-	}
 	bc := make(chan []byte, 1)
-	bc <- buf
+	bc <- bb
 	close(bc)
 	if scriptBytes, err = po.sendPacket(fmt.Sprintf(`
 recvBSON(%v,%s)
-`, len(buf), hint), ""); err != nil {
+`, len(bb), hint), ""); err != nil {
 		return err
 	}
 	if dataBytes, err = po.sendData(bc); err != nil {

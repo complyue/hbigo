@@ -6,6 +6,7 @@ import (
 
 	"github.com/complyue/hbigo/pkg/errors"
 	. "github.com/complyue/hbigo/pkg/util"
+	"github.com/globalsign/mgo/bson"
 	"github.com/golang/glog"
 )
 
@@ -140,7 +141,11 @@ func (co *conver) SendBSON(o interface{}, hint string) error {
 	if co.po.co != co {
 		panic(errors.NewUsageError("Conver mismatch ?!"))
 	}
-	return co.po.sendBSON(o, hint)
+	bb, err := bson.Marshal(o)
+	if err != nil {
+		return err
+	}
+	return co.po.sendBSON(bb, hint)
 }
 
 func (co *conver) RecvObj() (result interface{}, err error) {
