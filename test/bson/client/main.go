@@ -50,11 +50,12 @@ func main() {
 		defer co.Close()
 
 		for i := 0; i < 5; i++ {
+			obj2Echo["n"] = i
+			obj2Echo["id"] = bson.NewObjectId()
 
 			if err := co.SendCode("Echo()"); err != nil {
 				panic(err)
 			}
-			obj2Echo["n"] = i
 			err = co.SendBSON(obj2Echo, "")
 			if err != nil {
 				panic(err)
