@@ -6,7 +6,6 @@ import (
 	"reflect"
 
 	"github.com/complyue/hbigo"
-	"github.com/complyue/hbigo/pkg/errors"
 	"github.com/globalsign/mgo/bson"
 	"github.com/golang/glog"
 )
@@ -68,12 +67,11 @@ func main() {
 			if err != nil {
 				panic(err)
 			}
-			if !reflect.DeepEqual(o, obj2Echo) {
-				panic(errors.Errorf("Echo mismatch: [%#v] vs [%#v]", o, obj2Echo))
-			}
 
+			if !reflect.DeepEqual(o, obj2Echo) {
+				glog.Errorf("Echo mismatch: [%#v] vs [%#v]", o, obj2Echo)
+			}
 		}
-		glog.Info("Echo worked just fine.")
 	}()
 
 }
