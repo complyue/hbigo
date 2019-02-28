@@ -52,7 +52,10 @@ func main() {
 		for i := 0; i < 5; i++ {
 			obj2Echo["n"] = i
 			obj2Echo["id"] = bson.NewObjectId()
-			obj2Echo["ids"] = []bson.ObjectId{bson.NewObjectId()}
+			obj2Echo["ids"] = []bson.ObjectId{
+				bson.NewObjectId(),
+				bson.NewObjectId(),
+			}
 
 			if err := co.SendCode("Echo()"); err != nil {
 				panic(err)
