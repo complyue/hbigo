@@ -344,7 +344,9 @@ func (ho *HostingEndpoint) landOne() (gotObj interface{}, ok bool, err error) {
 		ho.closer = nil
 
 		// done with this wire
-		ho.Cancel(err)
+		if !ho.Cancelled() {
+			ho.Cancel(err)
+		}
 
 		return nil, false, err
 	}
