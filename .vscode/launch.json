@@ -2,6 +2,20 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Test BSON Server",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/test/bson/server"
+    },
+    {
+      "name": "Test BSON Client",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/test/bson/client"
+    },
+    {
       "name": "Test Mux Client - single threaded",
       "type": "go",
       "request": "launch",
