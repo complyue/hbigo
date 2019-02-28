@@ -327,7 +327,7 @@ func (ho *HostingEndpoint) landOne() (gotObj interface{}, ok bool, err error) {
 			// todo confirm next landing attempt should get EOF again without undesired side-effects,
 			// note this might be platform specific.
 			err = nil
-		} else {
+		} else if !ho.Cancelled() {
 			// treat receiving error as fatal, and fully disconnect (i.e.
 			// cancel the connection context at all)
 			ho.Cancel(err)
