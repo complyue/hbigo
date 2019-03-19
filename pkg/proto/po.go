@@ -103,7 +103,7 @@ func (po *PostingEndpoint) acquireSendTicket() {
 		if err == nil {
 			err = errors.Errorf("Posting endpoint already disconnected.")
 		}
-		panic(err)
+		panic(errors.RichError(err))
 	case <-po.chSendTicket:
 		// got the ticket
 		return
@@ -117,7 +117,7 @@ func (po *PostingEndpoint) releaseSendTicket() {
 		if err == nil {
 			err = errors.Errorf("Posting endpoint already disconnected.")
 		}
-		panic(err)
+		panic(errors.RichError(err))
 	case po.chSendDone <- struct{}{}:
 		// released the ticket
 		return
@@ -191,7 +191,7 @@ func (po *PostingEndpoint) NotifBSON(code string, o interface{}, hint string) (e
 	}
 	bb, e := bson.Marshal(o)
 	if e != nil {
-		err = e
+		err = errors.RichError(e)
 		return
 	}
 	if err = po.sendBSON(bb, hint); err != nil {

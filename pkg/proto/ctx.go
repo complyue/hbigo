@@ -97,14 +97,14 @@ func (ctx *hoContext) MustPoToPeer() Posting {
 		if !ctx.Cancelled() {
 			ctx.Cancel(err)
 		}
-		panic(err)
+		panic(errors.RichError(err))
 	}
 	if po.Cancelled() {
 		err := po.Err()
 		if err == nil {
 			err = errors.NewUsageError("Posting endpoint disconnected.")
 		}
-		panic(err)
+		panic(errors.RichError(err))
 	}
 	return po
 }

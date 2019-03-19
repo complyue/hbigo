@@ -143,7 +143,7 @@ func (co *conver) SendBSON(o interface{}, hint string) error {
 	}
 	bb, err := bson.Marshal(o)
 	if err != nil {
-		return err
+		return errors.RichError(err)
 	}
 	return co.po.sendBSON(bb, hint)
 }

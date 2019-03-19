@@ -88,7 +88,7 @@ func (ho *HostingEndpoint) HoCtx() HoContext {
 func (ho *HostingEndpoint) CoSendCode(code string) {
 	ho.coPoQue <- CoPoTask{entry: func(po *PostingEndpoint) {
 		if _, err := po.sendPacket(code, ""); err != nil {
-			panic(err)
+			panic(errors.RichError(err))
 		}
 	}}
 }
@@ -96,7 +96,7 @@ func (ho *HostingEndpoint) CoSendCode(code string) {
 func (ho *HostingEndpoint) CoSendData(data <-chan []byte) {
 	ho.coPoQue <- CoPoTask{entry: func(po *PostingEndpoint) {
 		if _, err := po.sendData(data); err != nil {
-			panic(err)
+			panic(errors.RichError(err))
 		}
 	}}
 }
@@ -104,11 +104,11 @@ func (ho *HostingEndpoint) CoSendData(data <-chan []byte) {
 func (ho *HostingEndpoint) CoSendBSON(o interface{}, hint string) {
 	bb, err := bson.Marshal(o)
 	if err != nil {
-		panic(err)
+		panic(errors.RichError(err))
 	}
 	ho.coPoQue <- CoPoTask{entry: func(po *PostingEndpoint) {
 		if err := po.sendBSON(bb, hint); err != nil {
-			panic(err)
+			panic(errors.RichError(err))
 		}
 	}}
 }
@@ -170,7 +170,7 @@ func (ho *HostingEndpoint) recvBSON(nBytes int, booter interface{}) (interface{}
 		booter = bson.M{}
 	}
 	if err := bson.Unmarshal(buf, booter); err != nil {
-		return nil, err
+		return nil, errors.RichError(err)
 	}
 	return booter, nil
 }
@@ -213,7 +213,7 @@ func (ho *HostingEndpoint) StartLandingLoops() {
 				defer po.releaseSendTicket()
 
 				if _, err := po.sendPacket(coID, "co_ack_begin"); err != nil {
-					panic(err)
+					panic(errors.RichError(err))
 				}
 				// execute posting tasks in the queue
 				for {
@@ -236,7 +236,7 @@ func (ho *HostingEndpoint) StartLandingLoops() {
 							panic(errors.NewWireError("Hosting conversation got task with co_end ?!"))
 						}
 						if _, err := po.sendPacket(coID, "co_ack_end"); err != nil {
-							panic(err)
+							panic(errors.RichError(err))
 						}
 						coID = ""
 						return
@@ -267,7 +267,7 @@ func (ho *HostingEndpoint) StartLandingLoops() {
 			}
 			result, ok, err := ho.landOne()
 			if err != nil {
-				panic(err)
+				panic(errors.RichError(err))
 			}
 			if ok {
 				poRcvr := ho.poRcvr
@@ -362,7 +362,7 @@ func (ho *HostingEndpoint) landOne() (gotObj interface{}, ok bool, err error) {
 	if strings.HasPrefix(pkt.WireDir, "coget:") {
 		execResult, ok, err = ho.Exec(pkt.Payload)
 		if err != nil {
-			panic(err)
+			panic(errors.RichError(err))
 		} else if !ok {
 			panic(errors.NewPacketError("coget code exec to void ?!", ho.netIdent, pkt.WireDir, pkt.Payload))
 		}
@@ -372,7 +372,7 @@ func (ho *HostingEndpoint) landOne() (gotObj interface{}, ok bool, err error) {
 			// i.e. use native textual representation of hosting language
 			ho.coPoQue <- CoPoTask{entry: func(po *PostingEndpoint) {
 				if _, err = po.sendPacket(fmt.Sprintf("%#v", execResult), ""); err != nil {
-					panic(err)
+					panic(errors.RichError(err))
 				}
 			}}
 		} else if strings.HasPrefix(serialization, "bson:") {
@@ -380,11 +380,11 @@ func (ho *HostingEndpoint) landOne() (gotObj interface{}, ok bool, err error) {
 			bsonHint := serialization[5:]
 			bb, err := bson.Marshal(execResult)
 			if err != nil {
-				panic(err)
+				panic(errors.RichError(err))
 			}
 			ho.coPoQue <- CoPoTask{entry: func(po *PostingEndpoint) {
 				if err := po.sendBSON(bb, bsonHint); err != nil {
-					panic(err)
+					panic(errors.RichError(err))
 				}
 			}}
 		} else {

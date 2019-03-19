@@ -155,7 +155,7 @@ func PrepareHosting(ctx HoContext) {
 		o, err := ho.recvBSON(nBytes, booter)
 		if err != nil {
 			glog.Error(errors.RichError(err))
-			panic(err)
+			panic(errors.RichError(err))
 		}
 		return o
 	}
@@ -177,7 +177,7 @@ func PrepareHosting(ctx HoContext) {
 		if err := hc.PoToPeer().Notif(fmt.Sprintf(`
 println(%#v)
 `, s)); err != nil {
-			panic(err)
+			panic(errors.RichError(err))
 		}
 	}
 
