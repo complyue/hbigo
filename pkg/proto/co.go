@@ -57,7 +57,7 @@ type Conver interface {
 	SendData(data <-chan []byte) (err error)
 
 	// receive an inbound data object created by landing scripts sent by peer
-	// the scripts is expected to be sent from peer by `po.CoSendCode()`
+	// the scripts is expected to be sent from peer by `ho.CoSendCode()`
 	RecvObj() (result interface{}, err error)
 
 	// receive a bson object. if `booter` is nil, `out` will be a `bson.M`, else
