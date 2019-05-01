@@ -102,12 +102,8 @@ func (ho *HostingEndpoint) CoSendData(data <-chan []byte) {
 }
 
 func (ho *HostingEndpoint) CoSendBSON(o interface{}, hint string) {
-	bb, err := bson.Marshal(o)
-	if err != nil {
-		panic(errors.RichError(err))
-	}
 	ho.coPoQue <- CoPoTask{entry: func(po *PostingEndpoint) {
-		if err := po.sendBSON(bb, hint); err != nil {
+		if err := po.sendBSON(o, hint); err != nil {
 			panic(errors.RichError(err))
 		}
 	}}
@@ -152,9 +148,21 @@ func (ho *HostingEndpoint) CoRecvData(data <-chan []byte) (err error) {
 	return
 }
 
-func (ho *HostingEndpoint) recvBSON(nBytes int, booter interface{}) (interface{}, error) {
+func (ho *HostingEndpoint) recvBSON(nBytes int, booter interface{}) (bo interface{}, err error) {
+	defer func() {
+		if e := recover(); e != nil {
+			err = errors.RichError(e)
+			panic(err) // re-throw with detailed stack info assured
+		}
+	}()
+
+	if booter == nil {
+		bo = bson.M{}
+	} else {
+		bo = booter
+	}
 	if nBytes <= 0 { // short circuit logic
-		return booter, nil
+		return
 	}
 
 	buf := make([]byte, nBytes)
@@ -162,17 +170,15 @@ func (ho *HostingEndpoint) recvBSON(nBytes int, booter interface{}) (interface{}
 	bc <- buf
 	close(bc)
 
-	if _, err := ho.recvData(bc); err != nil {
-		return nil, err
+	if _, err = ho.recvData(bc); err != nil {
+		return
 	}
 
-	if booter == nil {
-		booter = bson.M{}
+	if err = bson.Unmarshal(buf, bo); err != nil {
+		err = errors.RichError(err)
+		return
 	}
-	if err := bson.Unmarshal(buf, booter); err != nil {
-		return nil, errors.RichError(err)
-	}
-	return booter, nil
+	return
 }
 
 func (ho *HostingEndpoint) StartLandingLoops() {
@@ -378,12 +384,8 @@ func (ho *HostingEndpoint) landOne() (gotObj interface{}, ok bool, err error) {
 		} else if strings.HasPrefix(serialization, "bson:") {
 			// structured value, use hinted bson serialization
 			bsonHint := serialization[5:]
-			bb, err := bson.Marshal(execResult)
-			if err != nil {
-				panic(errors.RichError(err))
-			}
 			ho.coPoQue <- CoPoTask{entry: func(po *PostingEndpoint) {
-				if err := po.sendBSON(bb, bsonHint); err != nil {
+				if err := po.sendBSON(execResult, bsonHint); err != nil {
 					panic(errors.RichError(err))
 				}
 			}}

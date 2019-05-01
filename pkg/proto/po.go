@@ -189,12 +189,7 @@ func (po *PostingEndpoint) NotifBSON(code string, o interface{}, hint string) (e
 	if _, err = po.sendPacket(code, ""); err != nil {
 		return
 	}
-	bb, e := bson.Marshal(o)
-	if e != nil {
-		err = errors.RichError(e)
-		return
-	}
-	if err = po.sendBSON(bb, hint); err != nil {
+	if err = po.sendBSON(o, hint); err != nil {
 		return
 	}
 	return
@@ -229,9 +224,24 @@ func (po *PostingEndpoint) Ho() Hosting {
 	return po.ho
 }
 
-func (po *PostingEndpoint) sendBSON(bb []byte, hint string) error {
+func (po *PostingEndpoint) sendBSON(bo interface{}, hint string) (err error) {
+	defer func() {
+		if e := recover(); e != nil {
+			err = errors.RichError(e)
+			panic(err)
+			// re-throw with detailed stack info assured
+		} else if err != nil {
+			err = errors.RichError(err)
+		}
+	}()
+
+	var bb []byte
+	bb, err = bson.Marshal(bo)
+	if err != nil {
+		return
+	}
+
 	var scriptBytes, dataBytes int64
-	var err error
 	if glog.V(3) {
 		defer func() {
 			glog.Infof("Wire %s sent bson of %d+%d bytes, err=%v.", po.netIdent, scriptBytes, dataBytes, err)
@@ -247,7 +257,7 @@ func (po *PostingEndpoint) sendBSON(bb []byte, hint string) error {
 		scriptBytes, err = po.sendPacket(fmt.Sprintf(`
 recvBSON(0,%s)
 `, hint), "")
-		return err
+		return
 	}
 
 	bc := make(chan []byte, 1)
@@ -256,12 +266,12 @@ recvBSON(0,%s)
 	if scriptBytes, err = po.sendPacket(fmt.Sprintf(`
 recvBSON(%v,%s)
 `, len(bb), hint), ""); err != nil {
-		return err
+		return
 	}
 	if dataBytes, err = po.sendData(bc); err != nil {
-		return err
+		return
 	}
-	return nil
+	return
 }
 
 func (po *PostingEndpoint) Co() (co Conver, err error) {
